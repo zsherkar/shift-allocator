@@ -1,7 +1,15 @@
 import { Router, type IRouter } from "express";
 import crypto from "node:crypto";
-import { and, eq, sql } from "drizzle-orm";
-import { db, surveysTable, shiftsTable, respondentsTable, responsesTable, allocationsTable } from "@workspace/db";
+import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
+import {
+  db,
+  surveysTable,
+  shiftsTable,
+  respondentsTable,
+  responsesTable,
+  allocationsTable,
+  deletedResponsesTable,
+} from "@workspace/db";
 import { generateShiftsForMonth } from "../lib/shiftGenerator.js";
 import {
   CreateSurveyBody,
@@ -17,6 +25,7 @@ import {
   FIELD_LIMITS,
   normalizeRequiredText,
 } from "../lib/inputValidation.js";
+import { getEffectiveAllocationRespondentIds } from "../lib/allocationMembership.js";
 
 const router: IRouter = Router();
 
@@ -260,11 +269,15 @@ router.get("/surveys/:id/responses", async (req, res): Promise<void> => {
       respondentCategory: respondentsTable.category,
       hasPenalty: responsesTable.hasPenalty,
       penaltyHours: responsesTable.penaltyHours,
+      hasAfpCap: responsesTable.hasAfpCap,
       afpHoursCap: responsesTable.afpHoursCap,
     })
     .from(responsesTable)
     .innerJoin(respondentsTable, eq(responsesTable.respondentId, respondentsTable.id))
     .where(eq(responsesTable.surveyId, id));
+  const includedRespondentIds = new Set(
+    await getEffectiveAllocationRespondentIds(id),
+  );
 
   // Group by respondent
   const respondentMap = new Map<
@@ -278,7 +291,9 @@ router.get("/surveys/:id/responses", async (req, res): Promise<void> => {
       selectedShiftIds: number[];
       hasPenalty: boolean;
       penaltyHours: number;
+      hasAfpCap: boolean;
       afpHoursCap: number;
+      includedInLatestAllocation: boolean;
     }
   >();
 
@@ -293,7 +308,9 @@ router.get("/surveys/:id/responses", async (req, res): Promise<void> => {
           selectedShiftIds: [],
           hasPenalty: r.hasPenalty,
           penaltyHours: r.penaltyHours,
+          hasAfpCap: r.hasAfpCap,
           afpHoursCap: r.afpHoursCap,
+          includedInLatestAllocation: includedRespondentIds.has(r.respondentId),
         });
     }
     respondentMap.get(r.respondentId)!.selectedShiftIds.push(r.shiftId);
@@ -310,6 +327,44 @@ router.get("/surveys/:id/responses", async (req, res): Promise<void> => {
   res.json(result);
 });
 
+router.get("/surveys/:id/deleted-responses", async (req, res): Promise<void> => {
+  const id = parseInt(Array.isArray(req.params.id) ? req.params.id[0] : req.params.id, 10);
+  if (isNaN(id)) {
+    res.status(400).json({ error: "Invalid id" });
+    return;
+  }
+
+  const deletedResponses = await db
+    .select()
+    .from(deletedResponsesTable)
+    .where(
+      and(
+        eq(deletedResponsesTable.surveyId, id),
+        isNull(deletedResponsesTable.restoredAt),
+      ),
+    )
+    .orderBy(desc(deletedResponsesTable.deletedAt));
+
+  res.json(
+    deletedResponses.map((response) => ({
+      id: response.id,
+      surveyId: response.surveyId,
+      respondentId: response.respondentId,
+      name: response.respondentName,
+      preferredName: response.preferredName,
+      email: response.respondentEmail,
+      category: response.respondentCategory,
+      selectedShiftIds: response.shiftIds,
+      hasPenalty: response.hasPenalty,
+      penaltyHours: response.penaltyHours,
+      hasAfpCap: response.hasAfpCap,
+      afpHoursCap: response.afpHoursCap,
+      allocationCount: response.allocations.length,
+      deletedAt: response.deletedAt,
+    })),
+  );
+});
+
 router.delete("/surveys/:id/responses/:respondentId", async (req, res): Promise<void> => {
   const id = parseInt(Array.isArray(req.params.id) ? req.params.id[0] : req.params.id, 10);
   const respondentId = parseInt(
@@ -321,9 +376,230 @@ router.delete("/surveys/:id/responses/:respondentId", async (req, res): Promise<
     return;
   }
 
-  await db.delete(responsesTable).where(and(eq(responsesTable.surveyId, id), eq(responsesTable.respondentId, respondentId)));
-  await db.delete(allocationsTable).where(and(eq(allocationsTable.surveyId, id), eq(allocationsTable.respondentId, respondentId)));
-  res.sendStatus(204);
+  const archivedResponseId = await db.transaction(async (tx) => {
+    const existingResponses = await tx
+      .select()
+      .from(responsesTable)
+      .where(
+        and(
+          eq(responsesTable.surveyId, id),
+          eq(responsesTable.respondentId, respondentId),
+        ),
+      )
+      .orderBy(responsesTable.shiftId);
+
+    if (existingResponses.length === 0) {
+      return null;
+    }
+
+    const [respondent] = await tx
+      .select()
+      .from(respondentsTable)
+      .where(eq(respondentsTable.id, respondentId))
+      .limit(1);
+    if (!respondent) {
+      return null;
+    }
+
+    const existingAllocations = await tx
+      .select()
+      .from(allocationsTable)
+      .where(
+        and(
+          eq(allocationsTable.surveyId, id),
+          eq(allocationsTable.respondentId, respondentId),
+        ),
+      )
+      .orderBy(allocationsTable.shiftId);
+
+    const firstResponse = existingResponses[0];
+    const responseCreatedAt = new Date(
+      Math.min(...existingResponses.map((response) => response.createdAt.getTime())),
+    );
+    const [archivedResponse] = await tx
+      .insert(deletedResponsesTable)
+      .values({
+        surveyId: id,
+        respondentId,
+        respondentName: respondent.name,
+        preferredName: respondent.preferredName,
+        respondentEmail: respondent.email,
+        respondentCategory: respondent.category,
+        shiftIds: existingResponses.map((response) => response.shiftId),
+        hasPenalty: firstResponse.hasPenalty,
+        penaltyHours: firstResponse.penaltyHours,
+        hasAfpCap: firstResponse.hasAfpCap,
+        afpHoursCap: firstResponse.afpHoursCap,
+        responseCreatedAt,
+        allocations: existingAllocations.map((allocation) => ({
+          shiftId: allocation.shiftId,
+          isManuallyAdjusted: allocation.isManuallyAdjusted,
+          penaltyNote: allocation.penaltyNote,
+          createdAt: allocation.createdAt.toISOString(),
+        })),
+      })
+      .returning({ id: deletedResponsesTable.id });
+
+    await tx
+      .delete(allocationsTable)
+      .where(
+        and(
+          eq(allocationsTable.surveyId, id),
+          eq(allocationsTable.respondentId, respondentId),
+        ),
+      );
+    await tx
+      .delete(responsesTable)
+      .where(
+        and(
+          eq(responsesTable.surveyId, id),
+          eq(responsesTable.respondentId, respondentId),
+        ),
+      );
+
+    return archivedResponse.id;
+  });
+
+  if (archivedResponseId === null) {
+    res.status(404).json({ error: "Response not found" });
+    return;
+  }
+
+  res.status(200).json({ archivedResponseId });
+});
+
+router.post("/surveys/:id/deleted-responses/:deletedResponseId/restore", async (req, res): Promise<void> => {
+  const id = parseInt(Array.isArray(req.params.id) ? req.params.id[0] : req.params.id, 10);
+  const deletedResponseId = parseInt(
+    Array.isArray(req.params.deletedResponseId)
+      ? req.params.deletedResponseId[0]
+      : req.params.deletedResponseId,
+    10,
+  );
+  if (isNaN(id) || isNaN(deletedResponseId)) {
+    res.status(400).json({ error: "Invalid id" });
+    return;
+  }
+
+  const restoreResult = await db.transaction(async (tx) => {
+    const [archivedResponse] = await tx
+      .select()
+      .from(deletedResponsesTable)
+      .where(
+        and(
+          eq(deletedResponsesTable.id, deletedResponseId),
+          eq(deletedResponsesTable.surveyId, id),
+          isNull(deletedResponsesTable.restoredAt),
+        ),
+      )
+      .limit(1);
+
+    if (!archivedResponse) {
+      return { status: "not-found" as const };
+    }
+
+    const [activeResponse] = await tx
+      .select({ id: responsesTable.id })
+      .from(responsesTable)
+      .where(
+        and(
+          eq(responsesTable.surveyId, id),
+          eq(responsesTable.respondentId, archivedResponse.respondentId),
+        ),
+      )
+      .limit(1);
+    if (activeResponse) {
+      return { status: "already-active" as const };
+    }
+
+    const surveyShifts = await tx
+      .select({ id: shiftsTable.id })
+      .from(shiftsTable)
+      .where(eq(shiftsTable.surveyId, id));
+    const validShiftIds = new Set(surveyShifts.map((shift) => shift.id));
+    if (
+      archivedResponse.shiftIds.length === 0 ||
+      archivedResponse.shiftIds.some((shiftId) => !validShiftIds.has(shiftId))
+    ) {
+      return { status: "invalid-shifts" as const };
+    }
+
+    await tx.insert(responsesTable).values(
+      archivedResponse.shiftIds.map((shiftId) => ({
+        surveyId: id,
+        respondentId: archivedResponse.respondentId,
+        shiftId,
+        hasPenalty: archivedResponse.hasPenalty,
+        penaltyHours: archivedResponse.penaltyHours,
+        hasAfpCap: archivedResponse.hasAfpCap,
+        afpHoursCap: archivedResponse.afpHoursCap,
+        createdAt: archivedResponse.responseCreatedAt,
+      })),
+    );
+
+    const allocationShiftIds = archivedResponse.allocations.map(
+      (allocation) => allocation.shiftId,
+    );
+    const occupiedAllocationRows = allocationShiftIds.length > 0
+      ? await tx
+          .select({ shiftId: allocationsTable.shiftId })
+          .from(allocationsTable)
+          .where(
+            and(
+              eq(allocationsTable.surveyId, id),
+              inArray(allocationsTable.shiftId, allocationShiftIds),
+            ),
+          )
+      : [];
+    const occupiedAllocationIds = new Set(
+      occupiedAllocationRows.map((allocation) => allocation.shiftId),
+    );
+    const allocationsToRestore = archivedResponse.allocations.filter(
+      (allocation) => !occupiedAllocationIds.has(allocation.shiftId),
+    );
+
+    if (allocationsToRestore.length > 0) {
+      await tx.insert(allocationsTable).values(
+        allocationsToRestore.map((allocation) => ({
+          surveyId: id,
+          respondentId: archivedResponse.respondentId,
+          shiftId: allocation.shiftId,
+          isManuallyAdjusted: allocation.isManuallyAdjusted,
+          penaltyNote: allocation.penaltyNote,
+          createdAt: new Date(allocation.createdAt),
+        })),
+      );
+    }
+
+    await tx
+      .update(deletedResponsesTable)
+      .set({ restoredAt: new Date() })
+      .where(eq(deletedResponsesTable.id, archivedResponse.id));
+
+    return {
+      status: "restored" as const,
+      respondentId: archivedResponse.respondentId,
+      restoredShiftCount: archivedResponse.shiftIds.length,
+      restoredAllocationCount: allocationsToRestore.length,
+      skippedAllocationCount:
+        archivedResponse.allocations.length - allocationsToRestore.length,
+    };
+  });
+
+  if (restoreResult.status === "not-found") {
+    res.status(404).json({ error: "Deleted response not found" });
+    return;
+  }
+  if (restoreResult.status === "already-active") {
+    res.status(409).json({ error: "This respondent already has an active response" });
+    return;
+  }
+  if (restoreResult.status === "invalid-shifts") {
+    res.status(409).json({ error: "The archived response contains shifts that no longer exist" });
+    return;
+  }
+
+  res.json(restoreResult);
 });
 
 router.put("/surveys/:id/responses/:respondentId", async (req, res): Promise<void> => {
@@ -352,6 +628,7 @@ router.put("/surveys/:id/responses/:respondentId", async (req, res): Promise<voi
     .select({
       hasPenalty: responsesTable.hasPenalty,
       penaltyHours: responsesTable.penaltyHours,
+      hasAfpCap: responsesTable.hasAfpCap,
       afpHoursCap: responsesTable.afpHoursCap,
     })
     .from(responsesTable)
@@ -364,6 +641,9 @@ router.put("/surveys/:id/responses/:respondentId", async (req, res): Promise<voi
   const penaltyHours = Number.isFinite(incomingPenaltyHours)
     ? Math.max(0, incomingPenaltyHours)
     : existingResponse?.penaltyHours ?? 0;
+  const hasAfpCap = typeof req.body?.hasAfpCap === "boolean"
+    ? req.body.hasAfpCap
+    : existingResponse?.hasAfpCap ?? false;
   const afpHoursCap = Number.isFinite(incomingAfpHoursCap)
     ? Math.max(0, incomingAfpHoursCap)
     : existingResponse?.afpHoursCap ?? 10;
@@ -383,6 +663,7 @@ router.put("/surveys/:id/responses/:respondentId", async (req, res): Promise<voi
         shiftId,
         hasPenalty,
         penaltyHours: hasPenalty ? penaltyHours : 0,
+        hasAfpCap,
         afpHoursCap,
       });
     }
@@ -417,13 +698,19 @@ router.get("/surveys/:id/stats", async (req, res): Promise<void> => {
     .from(responsesTable)
     .innerJoin(respondentsTable, eq(responsesTable.respondentId, respondentsTable.id))
     .where(eq(responsesTable.surveyId, id));
+  const allocationRespondentIds = new Set(
+    await getEffectiveAllocationRespondentIds(id),
+  );
+  const includedResponses = responses.filter((response) =>
+    allocationRespondentIds.has(response.respondentId),
+  );
 
   const respondentMap = new Map<
     number,
     { respondentId: number; name: string; category: string; shiftIds: number[] }
   >();
 
-  for (const r of responses) {
+  for (const r of includedResponses) {
     if (!respondentMap.has(r.respondentId)) {
       respondentMap.set(r.respondentId, {
         respondentId: r.respondentId,
@@ -451,7 +738,7 @@ router.get("/surveys/:id/stats", async (req, res): Promise<void> => {
 
   // Shift type stats - group by time slot label
   const shiftTypeMap = new Map<string, { label: string; dayType: string; count: number }>();
-  for (const r of responses) {
+  for (const r of includedResponses) {
     const shift = shiftMap.get(r.shiftId);
     if (!shift) continue;
     const timeKey = `${shift.dayType}|${shift.startTime}-${shift.endTime}`;

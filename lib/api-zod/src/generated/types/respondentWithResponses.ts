@@ -18,5 +18,7 @@ export interface RespondentWithResponses {
   totalAvailableHours: number;
   hasPenalty: boolean;
   penaltyHours: number;
+  hasAfpCap: boolean;
   afpHoursCap: number;
+  includedInLatestAllocation: boolean;
 }

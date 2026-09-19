@@ -1,5 +1,6 @@
 import { forwardRef } from "react";
 import { format, parseISO } from "date-fns";
+import { formatAllocationDisplayName } from "@/lib/allocationDisplay";
 
 interface AllocatedShift {
   shiftId: number;
@@ -11,6 +12,7 @@ interface AllocatedShift {
   dayType: "weekday" | "weekend";
   startTime?: string;
   endTime?: string;
+  assignmentSource: string;
 }
 
 interface AllocationEntry {
@@ -281,9 +283,10 @@ export const ExcelScheduleCalendar = forwardRef<HTMLDivElement, ScheduleCalendar
       for (const shift of entry.allocatedShifts) {
         const startTime = shift.startTime ?? shiftInfoMap.get(shift.shiftId)?.startTime;
         if (!startTime) continue;
+        const displayName = formatAllocationDisplayName(entry.name, shift.assignmentSource);
         const stableKey = shift.stableShiftKey ?? stableKeyByShiftId.get(shift.shiftId);
-        if (stableKey) personMap.set(stableKey, entry.name);
-        legacyPersonMap.set(`${shift.date}|${startTime}`, entry.name);
+        if (stableKey) personMap.set(stableKey, displayName);
+        legacyPersonMap.set(`${shift.date}|${startTime}`, displayName);
       }
     }
 
@@ -324,6 +327,17 @@ export const ExcelScheduleCalendar = forwardRef<HTMLDivElement, ScheduleCalendar
         >
           Front Desk Schedule: {MONTH_NAMES[month - 1]} {year}
         </h2>
+        <p
+          style={{
+            margin: "0 0 12px",
+            textAlign: "center",
+            fontSize: 13,
+            lineHeight: "18px",
+            color: PALETTE.ink,
+          }}
+        >
+          * AFP assigned to a shift with no submitted availability.
+        </p>
 
         {weeks.map((week) => (
           <table

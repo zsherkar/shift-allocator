@@ -187,6 +187,9 @@ importers:
       express:
         specifier: ^5
         version: 5.2.1
+      highs:
+        specifier: ^1.15.2
+        version: 1.15.2
     devDependencies:
       '@types/cookie-parser':
         specifier: ^1.4.10
@@ -2416,6 +2419,9 @@ packages:
   hasown@2.0.2:
     resolution: {integrity: sha512-0hJU9SCPvmMzIBdZFqNPXWa6dqh7WdH0cII9y+CyS8rG3nL48Bclra9HmKhVVUHyPWNH5Y7xDwAB7bfgSjkUMQ==}
     engines: {node: '>= 0.4'}
+
+  highs@1.15.2:
+    resolution: {integrity: sha512-IugrQ7Z8nSMHgVneTFwzV8fIfaR85l/kGhN+jvEDbm5k5MlGXtq1Zp2hy1fkmHA71nCmIg9F7ayWfEPxLpfUyA==}
 
   html2canvas@1.4.1:
     resolution: {integrity: sha512-fPU6BHNpsyIhr8yyMpTLLxAbkaK8ArIBcmZIRiBLiDhjeqvXolaEmDGmELFuX9I4xDcaKKcJl+TKZLqruBbmWA==}
@@ -5348,6 +5354,8 @@ snapshots:
   hasown@2.0.2:
     dependencies:
       function-bind: 1.1.2
+
+  highs@1.15.2: {}
 
   html2canvas@1.4.1:
     dependencies:

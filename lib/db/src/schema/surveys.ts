@@ -1,4 +1,4 @@
-import { pgTable, text, serial, timestamp, integer, boolean } from "drizzle-orm/pg-core";
+import { pgTable, text, serial, timestamp, integer, boolean, jsonb } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod/v4";
 
@@ -10,6 +10,7 @@ export const surveysTable = pgTable("surveys", {
   status: text("status").notNull().default("open"),
   closesAt: timestamp("closes_at", { withTimezone: true }),
   token: text("token").notNull().unique(),
+  allocationIncludedRespondentIds: jsonb("allocation_included_respondent_ids").$type<number[]>(),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow().$onUpdate(() => new Date()),
 });

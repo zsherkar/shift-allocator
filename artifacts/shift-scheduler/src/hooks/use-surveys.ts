@@ -1,5 +1,4 @@
-import { useQueryClient } from "@tanstack/react-query";
-import { useMutation } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { 
   useCreateSurvey as useGeneratedCreateSurvey,
   useUpdateSurvey as useGeneratedUpdateSurvey,
@@ -21,6 +20,47 @@ export {
   useGetSurveyResponses, 
   useGetSurveyStats 
 };
+
+export type DeletedSurveyResponse = {
+  id: number;
+  surveyId: number;
+  respondentId: number;
+  name: string;
+  preferredName: string;
+  email: string | null;
+  category: string;
+  selectedShiftIds: number[];
+  hasPenalty: boolean;
+  penaltyHours: number;
+  hasAfpCap: boolean;
+  afpHoursCap: number;
+  allocationCount: number;
+  deletedAt: string;
+};
+
+const getDeletedSurveyResponsesQueryKey = (surveyId: number) =>
+  ["surveys", surveyId, "deleted-responses"] as const;
+
+function invalidateSurveyResponseData(queryClient: ReturnType<typeof useQueryClient>, surveyId: number) {
+  queryClient.invalidateQueries({ queryKey: getGetSurveyQueryKey(surveyId) });
+  queryClient.invalidateQueries({ queryKey: getGetSurveyResponsesQueryKey(surveyId) });
+  queryClient.invalidateQueries({ queryKey: getGetSurveyStatsQueryKey(surveyId) });
+  queryClient.invalidateQueries({ queryKey: getGetAllocationsQueryKey(surveyId) });
+  queryClient.invalidateQueries({ queryKey: getGetAllocationStatsQueryKey(surveyId) });
+  queryClient.invalidateQueries({ queryKey: getDeletedSurveyResponsesQueryKey(surveyId) });
+}
+
+export function useDeletedSurveyResponses(surveyId: number) {
+  return useQuery({
+    queryKey: getDeletedSurveyResponsesQueryKey(surveyId),
+    queryFn: async () => {
+      const response = await fetch(`/api/surveys/${surveyId}/deleted-responses`);
+      if (!response.ok) throw new Error("Failed to load deleted responses");
+      return response.json() as Promise<DeletedSurveyResponse[]>;
+    },
+    enabled: Number.isInteger(surveyId) && surveyId > 0,
+  });
+}
 
 export function useCreateSurvey() {
   const queryClient = useQueryClient();
@@ -66,11 +106,38 @@ export function useDeleteSurveyResponse() {
       if (!response.ok) throw new Error("Failed to delete response");
     },
     onSuccess: (_, variables) => {
-      queryClient.invalidateQueries({ queryKey: getGetSurveyQueryKey(variables.surveyId) });
-      queryClient.invalidateQueries({ queryKey: getGetSurveyResponsesQueryKey(variables.surveyId) });
-      queryClient.invalidateQueries({ queryKey: getGetSurveyStatsQueryKey(variables.surveyId) });
-      queryClient.invalidateQueries({ queryKey: getGetAllocationsQueryKey(variables.surveyId) });
-      queryClient.invalidateQueries({ queryKey: getGetAllocationStatsQueryKey(variables.surveyId) });
+      invalidateSurveyResponseData(queryClient, variables.surveyId);
+    },
+  });
+}
+
+export function useRestoreSurveyResponse() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({
+      surveyId,
+      deletedResponseId,
+    }: {
+      surveyId: number;
+      deletedResponseId: number;
+    }) => {
+      const response = await fetch(
+        `/api/surveys/${surveyId}/deleted-responses/${deletedResponseId}/restore`,
+        { method: "POST" },
+      );
+      if (!response.ok) {
+        const body = await response.json().catch(() => null);
+        throw new Error(body?.error || "Failed to restore response");
+      }
+      return response.json() as Promise<{
+        respondentId: number;
+        restoredShiftCount: number;
+        restoredAllocationCount: number;
+        skippedAllocationCount: number;
+      }>;
+    },
+    onSuccess: (_, variables) => {
+      invalidateSurveyResponseData(queryClient, variables.surveyId);
     },
   });
 }
@@ -84,6 +151,7 @@ export function useUpdateSurveyResponse() {
       selectedShiftIds,
       hasPenalty,
       penaltyHours,
+      hasAfpCap,
       afpHoursCap,
     }: {
       surveyId: number;
@@ -91,12 +159,13 @@ export function useUpdateSurveyResponse() {
       selectedShiftIds: number[];
       hasPenalty?: boolean;
       penaltyHours?: number;
+      hasAfpCap?: boolean;
       afpHoursCap?: number;
     }) => {
       const response = await fetch(`/api/surveys/${surveyId}/responses/${respondentId}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ selectedShiftIds, hasPenalty, penaltyHours, afpHoursCap }),
+        body: JSON.stringify({ selectedShiftIds, hasPenalty, penaltyHours, hasAfpCap, afpHoursCap }),
       });
       if (!response.ok) throw new Error("Failed to update response");
     },

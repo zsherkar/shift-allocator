@@ -6,6 +6,8 @@
  * OpenAPI spec version: 0.1.0
  */
 import type { AllocationDryRunAssignment } from "./allocationDryRunAssignment";
+import type { AllocationDryRunRespondentPlan } from "./allocationDryRunRespondentPlan";
+import type { AllocationDryRunResultOptimizationMethod } from "./allocationDryRunResultOptimizationMethod";
 import type { AllocationDryRunResultSettings } from "./allocationDryRunResultSettings";
 
 export interface AllocationDryRunResult {
@@ -24,10 +26,15 @@ export interface AllocationDryRunResult {
   nonPenalizedGeneralRangeHours: number;
   fairnessRepairMoveCount: number;
   highStdDevReasonCodes: string[];
+  optimizationMethod: AllocationDryRunResultOptimizationMethod;
+  optimizerStatus: string;
+  optimalCoverageProven: boolean;
+  backToBackPairDays: number;
   backToBackEmergencyAssignments: number;
   afpCapOverflowAssignments: number;
   noAvailabilityAfpPlaceholderAssignments: number;
   settings: AllocationDryRunResultSettings;
+  respondentPlans: AllocationDryRunRespondentPlan[];
   assignments: AllocationDryRunAssignment[];
   unallocatedShiftIds: number[];
 }

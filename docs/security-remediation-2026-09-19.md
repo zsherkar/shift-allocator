@@ -1,6 +1,8 @@
 # Dependency security remediation — 19 September 2026
 
-Base: `06302f17e58a38c0f601cfe70f9a45986de78405` on `master`.
+Original remediation base: `06302f17e58a38c0f601cfe70f9a45986de78405` on `master` (PR #20).
+
+Production backport base: `703265c75c5d8da3fa33e546585d0bb20c6553b7` on `render-monthly-hosting`. The backport preserves the live allocation optimizer, recovery snapshots, membership handling, and all other production features. The API manifest conflict was resolved by retaining `highs` and updating only esbuild. No application logic or database schema changes are included. Production validation passed 91 tests (82 API/allocation, three frontend export/label, six security), and the dependency audit reported zero vulnerabilities. GitHub reported zero open Dependabot alerts after PR #20 merged.
 
 GitHub reported 61 open Dependabot alerts: 11 critical, 25 high, 17 medium and 8 low, across 19 packages. Every reported vulnerable range was checked against every version of its package in the updated lockfile; none still matches. `pnpm audit --json` reports zero vulnerabilities. Its initial total was 60 because the GitHub list includes two esbuild alerts for the same advisory.
 

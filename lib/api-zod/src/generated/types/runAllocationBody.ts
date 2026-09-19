@@ -7,7 +7,7 @@
  */
 
 export interface RunAllocationBody {
-  /** IDs of respondents to treat as AFP (capped at 10 hours each) */
+  /** IDs of AFP respondents whose saved per-survey AFP cap is enabled */
   afpRespondentIds: number[];
   /** Deprecated alias for noAvailabilityFallbackAfpIds */
   afpUnclaimedShiftRespondentIds?: number[];
