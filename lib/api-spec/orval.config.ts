@@ -22,13 +22,13 @@ export default defineConfig({
       },
     },
     output: {
-      workspace: apiClientReactSrc,
-      target: "generated",
+      // Absolute targets keep Orval from rewriting the package's public index.ts.
+      target: path.resolve(apiClientReactSrc, "generated"),
       client: "react-query",
       mode: "split",
       baseUrl: "/api",
       clean: true,
-      prettier: true,
+      formatter: "prettier",
       override: {
         fetch: {
           includeHttpResponseReturnType: false,
@@ -48,18 +48,21 @@ export default defineConfig({
       },
     },
     output: {
-      workspace: apiZodSrc,
       client: "zod",
-      target: "generated",
-      schemas: { path: "generated/types", type: "typescript" },
+      target: path.resolve(apiZodSrc, "generated"),
+      schemas: {
+        path: path.resolve(apiZodSrc, "generated/types"),
+        type: "typescript",
+      },
       mode: "split",
       clean: true,
-      prettier: true,
+      formatter: "prettier",
       override: {
         zod: {
+          version: 3,
           coerce: {
-            query: ['boolean', 'number', 'string'],
-            param: ['boolean', 'number', 'string'],
+            query: ["boolean", "number", "string"],
+            param: ["boolean", "number", "string"],
           },
         },
         useDates: true,

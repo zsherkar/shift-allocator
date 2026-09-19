@@ -24,7 +24,7 @@ catalog:
   tailwind-merge: 3.5.0
   tailwindcss: ^4.2.2
   tsx: ^4.21.0
-  vite: ^7.3.2
+  vite: ^7.3.6
   zod: ^3.25.76
 
 minimumReleaseAge: 1440
@@ -36,6 +36,15 @@ onlyBuiltDependencies:
   - unrs-resolver
 
 overrides:
+  # Keep transitive dependencies above the September 2026 advisory fix floors.
+  '@babel/core': ^7.29.6
+  baseline-browser-mapping: ^2.11.0
+  body-parser: ^2.3.0
+  browserslist: ^4.28.7
+  fflate: ^0.8.3
+  js-yaml: ^4.3.2
+  qs: ^6.16.0
+  tmp: ^0.2.6
   '@esbuild-kit/esm-loader': npm:tsx@^4.21.0
   '@expo/ngrok-bin>@expo/ngrok-bin-darwin-arm64': '-'
   '@expo/ngrok-bin>@expo/ngrok-bin-darwin-x64': '-'
@@ -56,9 +65,9 @@ overrides:
   '@tailwindcss/oxide>@tailwindcss/oxide-linux-arm64-musl': '-'
   '@tailwindcss/oxide>@tailwindcss/oxide-linux-x64-musl': '-'
   '@tailwindcss/oxide>@tailwindcss/oxide-win32-arm64-msvc': '-'
-  brace-expansion: ^2.0.3
-  dompurify: ^3.4.0
-  esbuild: 0.27.3
+  brace-expansion: ^2.1.4
+  dompurify: ^3.4.13
+  esbuild: 0.28.2
   esbuild>@esbuild/aix-ppc64: '-'
   esbuild>@esbuild/android-arm: '-'
   esbuild>@esbuild/android-arm64: '-'
@@ -83,8 +92,10 @@ overrides:
   esbuild>@esbuild/sunos-x64: '-'
   esbuild>@esbuild/win32-arm64: '-'
   esbuild>@esbuild/win32-ia32: '-'
+  # ExcelJS uses the CommonJS v4 API, which is retained in UUID 11.
+  # UUID 12+ is ESM-only; stay on the patched CommonJS-compatible major.
+  exceljs>uuid: ^11.1.1
   fdir>picomatch: ^4.0.4
-  path-to-regexp: ^8.4.0
   lightningcss>lightningcss-android-arm64: '-'
   lightningcss>lightningcss-darwin-arm64: '-'
   lightningcss>lightningcss-darwin-x64: '-'
@@ -95,6 +106,7 @@ overrides:
   lightningcss>lightningcss-linux-x64-musl: '-'
   lightningcss>lightningcss-win32-arm64-msvc: '-'
   micromatch>picomatch: ^2.3.2
+  path-to-regexp: ^8.4.0
   rollup>@rollup/rollup-android-arm-eabi: '-'
   rollup>@rollup/rollup-android-arm64: '-'
   rollup>@rollup/rollup-darwin-arm64: '-'
