@@ -17,4 +17,9 @@ export interface AllocationResult {
   unallocatedShiftIds: number[];
   blankShiftExplanations: BlankShiftExplanation[];
   allocationAudit: AllocationBlankAuditRow[];
+  /** @nullable */
+  createdSnapshotId?: number | null;
+  restoredSnapshotId?: number;
+  /** @nullable */
+  undoSnapshotId?: number | null;
 }

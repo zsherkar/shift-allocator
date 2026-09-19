@@ -111,7 +111,9 @@ export interface RespondentWithResponses {
   totalAvailableHours: number;
   hasPenalty: boolean;
   penaltyHours: number;
+  hasAfpCap: boolean;
   afpHoursCap: number;
+  includedInLatestAllocation: boolean;
 }
 
 export type PublicSurveyStatus =
@@ -225,7 +227,7 @@ export interface UpdateRespondentBody {
 }
 
 export interface RunAllocationBody {
-  /** IDs of respondents to treat as AFP (capped at 10 hours each) */
+  /** IDs of AFP respondents whose saved per-survey AFP cap is enabled */
   afpRespondentIds: number[];
   /** Deprecated alias for noAvailabilityFallbackAfpIds */
   afpUnclaimedShiftRespondentIds?: number[];
@@ -399,6 +401,20 @@ export interface AllocationResult {
   unallocatedShiftIds: number[];
   blankShiftExplanations: BlankShiftExplanation[];
   allocationAudit: AllocationBlankAuditRow[];
+  /** @nullable */
+  createdSnapshotId?: number | null;
+  restoredSnapshotId?: number;
+  /** @nullable */
+  undoSnapshotId?: number | null;
+}
+
+export interface AllocationSnapshotSummary {
+  id: number;
+  surveyId: number;
+  label: string;
+  reason: string;
+  allocationCount: number;
+  createdAt: string;
 }
 
 export interface AdjustAllocationBody {
@@ -475,6 +491,9 @@ export interface AllocationRespondentStat {
   penaltyHours: number;
   penaltyGapHours: number;
   targetHours: number;
+  neutralTargetHours: number;
+  effectivePenaltyHours: number;
+  unappliedPenaltyHours: number;
   availableCapacityHours: number;
   deviationFromTargetHours: number;
   sameDayDoubleCount: number;
@@ -491,6 +510,40 @@ export interface AllocationDryRunAssignment {
   source: string;
   explanationCodes: string[];
 }
+
+export type AllocationDryRunRespondentPlanCategory =
+  (typeof AllocationDryRunRespondentPlanCategory)[keyof typeof AllocationDryRunRespondentPlanCategory];
+
+export const AllocationDryRunRespondentPlanCategory = {
+  AFP: "AFP",
+  General: "General",
+} as const;
+
+export interface AllocationDryRunRespondentPlan {
+  respondentId: number;
+  name: string;
+  category: AllocationDryRunRespondentPlanCategory;
+  totalHours: number;
+  targetHours: number;
+  neutralTargetHours: number;
+  availableCapacityHours: number;
+  deviationFromTargetHours: number;
+  hasPenalty: boolean;
+  penaltyHours: number;
+  effectivePenaltyHours: number;
+  unappliedPenaltyHours: number;
+  hasAfpCap: boolean;
+  capacityLimited: boolean;
+  sameDayDoubleCount: number;
+}
+
+export type AllocationDryRunResultOptimizationMethod =
+  (typeof AllocationDryRunResultOptimizationMethod)[keyof typeof AllocationDryRunResultOptimizationMethod];
+
+export const AllocationDryRunResultOptimizationMethod = {
+  global_milp: "global_milp",
+  greedy_fallback: "greedy_fallback",
+} as const;
 
 export type AllocationDryRunResultSettings = { [key: string]: unknown };
 
@@ -510,10 +563,15 @@ export interface AllocationDryRunResult {
   nonPenalizedGeneralRangeHours: number;
   fairnessRepairMoveCount: number;
   highStdDevReasonCodes: string[];
+  optimizationMethod: AllocationDryRunResultOptimizationMethod;
+  optimizerStatus: string;
+  optimalCoverageProven: boolean;
+  backToBackPairDays: number;
   backToBackEmergencyAssignments: number;
   afpCapOverflowAssignments: number;
   noAvailabilityAfpPlaceholderAssignments: number;
   settings: AllocationDryRunResultSettings;
+  respondentPlans: AllocationDryRunRespondentPlan[];
   assignments: AllocationDryRunAssignment[];
   unallocatedShiftIds: number[];
 }

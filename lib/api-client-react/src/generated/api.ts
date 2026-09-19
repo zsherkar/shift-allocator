@@ -20,6 +20,7 @@ import type {
   AdjustAllocationBody,
   AllocationDryRunResult,
   AllocationResult,
+  AllocationSnapshotSummary,
   AllocationStats,
   CreateRespondentBody,
   CreateSurveyBody,
@@ -974,6 +975,188 @@ export const useAdjustAllocation = <
   TContext
 > => {
   return useMutation(getAdjustAllocationMutationOptions(options));
+};
+
+/**
+ * @summary List recent restorable allocation snapshots for a survey
+ */
+export const getGetAllocationSnapshotsUrl = (id: number) => {
+  return `/api/surveys/${id}/allocation-snapshots`;
+};
+
+export const getAllocationSnapshots = async (
+  id: number,
+  options?: RequestInit,
+): Promise<AllocationSnapshotSummary[]> => {
+  return customFetch<AllocationSnapshotSummary[]>(
+    getGetAllocationSnapshotsUrl(id),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export const getGetAllocationSnapshotsQueryKey = (id: number) => {
+  return [`/api/surveys/${id}/allocation-snapshots`] as const;
+};
+
+export const getGetAllocationSnapshotsQueryOptions = <
+  TData = Awaited<ReturnType<typeof getAllocationSnapshots>>,
+  TError = ErrorType<ErrorResponse>,
+>(
+  id: number,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getAllocationSnapshots>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getGetAllocationSnapshotsQueryKey(id);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getAllocationSnapshots>>
+  > = ({ signal }) => getAllocationSnapshots(id, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!id,
+    ...queryOptions,
+  } as UseQueryOptions<
+    Awaited<ReturnType<typeof getAllocationSnapshots>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetAllocationSnapshotsQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getAllocationSnapshots>>
+>;
+export type GetAllocationSnapshotsQueryError = ErrorType<ErrorResponse>;
+
+/**
+ * @summary List recent restorable allocation snapshots for a survey
+ */
+
+export function useGetAllocationSnapshots<
+  TData = Awaited<ReturnType<typeof getAllocationSnapshots>>,
+  TError = ErrorType<ErrorResponse>,
+>(
+  id: number,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getAllocationSnapshots>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetAllocationSnapshotsQueryOptions(id, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Restore a saved allocation snapshot and preserve the replaced state
+ */
+export const getRestoreAllocationSnapshotUrl = (
+  id: number,
+  snapshotId: number,
+) => {
+  return `/api/surveys/${id}/allocation-snapshots/${snapshotId}/restore`;
+};
+
+export const restoreAllocationSnapshot = async (
+  id: number,
+  snapshotId: number,
+  options?: RequestInit,
+): Promise<AllocationResult> => {
+  return customFetch<AllocationResult>(
+    getRestoreAllocationSnapshotUrl(id, snapshotId),
+    {
+      ...options,
+      method: "POST",
+    },
+  );
+};
+
+export const getRestoreAllocationSnapshotMutationOptions = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof restoreAllocationSnapshot>>,
+    TError,
+    { id: number; snapshotId: number },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof restoreAllocationSnapshot>>,
+  TError,
+  { id: number; snapshotId: number },
+  TContext
+> => {
+  const mutationKey = ["restoreAllocationSnapshot"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof restoreAllocationSnapshot>>,
+    { id: number; snapshotId: number }
+  > = (props) => {
+    const { id, snapshotId } = props ?? {};
+
+    return restoreAllocationSnapshot(id, snapshotId, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type RestoreAllocationSnapshotMutationResult = NonNullable<
+  Awaited<ReturnType<typeof restoreAllocationSnapshot>>
+>;
+
+export type RestoreAllocationSnapshotMutationError = ErrorType<ErrorResponse>;
+
+/**
+ * @summary Restore a saved allocation snapshot and preserve the replaced state
+ */
+export const useRestoreAllocationSnapshot = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof restoreAllocationSnapshot>>,
+    TError,
+    { id: number; snapshotId: number },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof restoreAllocationSnapshot>>,
+  TError,
+  { id: number; snapshotId: number },
+  TContext
+> => {
+  return useMutation(getRestoreAllocationSnapshotMutationOptions(options));
 };
 
 /**

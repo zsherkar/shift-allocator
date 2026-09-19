@@ -14,6 +14,7 @@ export const responsesTable = pgTable(
     shiftId: integer("shift_id").notNull().references(() => shiftsTable.id, { onDelete: "cascade" }),
     hasPenalty: boolean("has_penalty").notNull().default(false),
     penaltyHours: real("penalty_hours").notNull().default(0),
+    hasAfpCap: boolean("has_afp_cap").notNull().default(false),
     afpHoursCap: real("afp_hours_cap").notNull().default(10),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },

@@ -4,12 +4,15 @@ import {
   canAssignShiftToRespondent,
   deriveShiftSlotIndexes,
   hoursToMinutes,
+  isBackToBack,
+  maxFeasibleShiftCapacityMinutes,
   minutesToHours,
   sameDayAllocationTier,
   solveNonAfpPenaltyTargets,
   stableShiftKey,
 } from "./allocationCore.js";
 import { safeDisplayName } from "./inputValidation.js";
+import { runGlobalAllocation } from "./allocationOptimizer.js";
 
 export interface AllocationOptions {
   surveyId: number;
@@ -57,6 +60,7 @@ export interface AllocationRespondentInput {
   availableShiftIds: Set<number>;
   hasPenalty: boolean;
   penaltyHours: number;
+  hasAfpCap: boolean;
   afpHoursCap: number;
   allowNoAvailabilityFallback: boolean;
 }
@@ -117,6 +121,10 @@ export interface FairnessDiagnostics {
   assignedShiftCountBeforeRepair: number;
   assignedShiftCountAfterRepair: number;
   highStdDevReasonCodes: string[];
+  optimizationMethod?: "global_milp" | "greedy_fallback";
+  optimizerStatus?: string;
+  backToBackPairDays?: number;
+  optimalCoverageProven?: boolean;
 }
 
 function stdDev(values: number[]): number {
@@ -194,27 +202,56 @@ function compareCandidates(a: Candidate, b: Candidate): number {
   return a.respondent.name.localeCompare(b.respondent.name) || a.respondent.id - b.respondent.id;
 }
 
-export function runPureAllocation(input: PureAllocationInput): PureAllocationOutput {
+function runGreedyAllocation(input: PureAllocationInput): PureAllocationOutput {
   const shifts = normalizeShifts(input.shifts);
   const shiftMap = new Map(shifts.map((shift) => [shift.id, shift]));
   const availabilityByShiftId = new Map<number, Set<number>>();
   for (const shift of shifts) availabilityByShiftId.set(shift.id, new Set());
-
-  const respondents: RespondentInfo[] = input.respondents
-    .map((respondent) => ({
-      ...respondent,
-      availableCapacityMinutes: Array.from(respondent.availableShiftIds).reduce(
-        (sum, shiftId) => sum + hoursToMinutes(shiftMap.get(shiftId)?.durationHours ?? 0),
-        0,
-      ),
-    }))
-    .sort((a, b) => a.name.localeCompare(b.name) || a.id - b.id);
-
-  for (const respondent of respondents) {
+  for (const respondent of input.respondents) {
     for (const shiftId of respondent.availableShiftIds) {
       availabilityByShiftId.get(shiftId)?.add(respondent.id);
     }
   }
+
+  const inputRespondentIds = new Set(input.respondents.map((respondent) => respondent.id));
+  const manualRespondentIdByShiftId = new Map<number, number>();
+  for (const manual of input.manualAssignments ?? []) {
+    if (
+      manualRespondentIdByShiftId.has(manual.shiftId) ||
+      !shiftMap.has(manual.shiftId) ||
+      !inputRespondentIds.has(manual.respondentId)
+    ) {
+      continue;
+    }
+    manualRespondentIdByShiftId.set(manual.shiftId, manual.respondentId);
+  }
+  const manualMinutesByRespondentId = new Map<number, number>();
+  for (const [shiftId, respondentId] of manualRespondentIdByShiftId) {
+    manualMinutesByRespondentId.set(
+      respondentId,
+      (manualMinutesByRespondentId.get(respondentId) ?? 0) + hoursToMinutes(shiftMap.get(shiftId)?.durationHours ?? 0),
+    );
+  }
+
+  const respondents: RespondentInfo[] = input.respondents
+    .map((respondent) => {
+      const mandatoryShiftIds = new Set(
+        Array.from(manualRespondentIdByShiftId.entries())
+          .filter(([, respondentId]) => respondentId === respondent.id)
+          .map(([shiftId]) => shiftId),
+      );
+      const capacityShifts = shifts.filter((shift) => {
+        const manualRespondentId = manualRespondentIdByShiftId.get(shift.id);
+        return manualRespondentId === undefined
+          ? respondent.availableShiftIds.has(shift.id)
+          : manualRespondentId === respondent.id;
+      });
+      return {
+        ...respondent,
+        availableCapacityMinutes: maxFeasibleShiftCapacityMinutes(capacityShifts, mandatoryShiftIds),
+      };
+    })
+    .sort((a, b) => a.name.localeCompare(b.name) || a.id - b.id);
 
   const respondentById = new Map(respondents.map((respondent) => [respondent.id, respondent]));
   const assignmentsByRespondentId = new Map<number, AllocationAssignment[]>();
@@ -228,6 +265,7 @@ export function runPureAllocation(input: PureAllocationInput): PureAllocationOut
     (assignmentsByRespondentId.get(respondentId) ?? [])
       .filter(
         (assignment) =>
+          assignment.source === "manual" ||
           assignment.source === "engine_normal" ||
           assignment.source === "engine_back_to_back_emergency",
       )
@@ -268,35 +306,42 @@ export function runPureAllocation(input: PureAllocationInput): PureAllocationOut
     });
   }
 
-  const normalAssignableShifts = shifts.filter((shift) => (availabilityByShiftId.get(shift.id)?.size ?? 0) > 0);
-  const intendedAfpNormalMinutes = respondents
-    .filter((respondent) => respondent.category === "AFP")
+  const staffableShifts = shifts.filter(
+    (shift) => (availabilityByShiftId.get(shift.id)?.size ?? 0) > 0 || manualRespondentIdByShiftId.has(shift.id),
+  );
+  const intendedCappedAfpMinutes = respondents
+    .filter((respondent) => respondent.hasAfpCap)
     .reduce(
       (sum, respondent) =>
-        sum + Math.min(hoursToMinutes(respondent.afpHoursCap), respondent.availableCapacityMinutes),
+        sum +
+        Math.max(
+          manualMinutesByRespondentId.get(respondent.id) ?? 0,
+          Math.min(hoursToMinutes(respondent.afpHoursCap), respondent.availableCapacityMinutes),
+        ),
       0,
     );
   const intendedNonAfpMinutes = Math.max(
     0,
-    normalAssignableShifts.reduce((sum, shift) => sum + hoursToMinutes(shift.durationHours), 0) -
-      intendedAfpNormalMinutes,
+    staffableShifts.reduce((sum, shift) => sum + hoursToMinutes(shift.durationHours), 0) - intendedCappedAfpMinutes,
   );
-  const generalRespondents = respondents.filter((respondent) => respondent.category === "General");
-  const targetResult = solveNonAfpPenaltyTargets(
-    generalRespondents.map((respondent) => ({
-      respondentId: respondent.id,
-      penaltyMinutes: hoursToMinutes(respondent.hasPenalty ? respondent.penaltyHours : 0),
-      capacityMinutes: respondent.availableCapacityMinutes,
-    })),
-    intendedNonAfpMinutes,
-  );
+  const generalRespondents = respondents.filter((respondent) => !respondent.hasAfpCap);
+  const generalTargetInputs = generalRespondents.map((respondent) => ({
+    respondentId: respondent.id,
+    penaltyMinutes: hoursToMinutes(respondent.hasPenalty ? respondent.penaltyHours : 0),
+    capacityMinutes: respondent.availableCapacityMinutes,
+    minimumMinutes: manualMinutesByRespondentId.get(respondent.id) ?? 0,
+  }));
+  let targetResult = solveNonAfpPenaltyTargets(generalTargetInputs, intendedNonAfpMinutes);
   const targetMinutesByRespondentId = new Map<number, number>();
   for (const target of targetResult.targets) {
     targetMinutesByRespondentId.set(target.respondentId, target.targetMinutes);
   }
   for (const respondent of respondents) {
-    if (respondent.category === "AFP") {
-      targetMinutesByRespondentId.set(respondent.id, hoursToMinutes(respondent.afpHoursCap));
+    if (respondent.hasAfpCap) {
+      targetMinutesByRespondentId.set(
+        respondent.id,
+        Math.min(hoursToMinutes(respondent.afpHoursCap), respondent.availableCapacityMinutes),
+      );
     }
   }
 
@@ -322,7 +367,7 @@ export function runPureAllocation(input: PureAllocationInput): PureAllocationOut
       shiftMap,
       isAvailable,
       assignmentSource: source,
-      category: respondent.category,
+      category: respondent.hasAfpCap ? "AFP" : "General",
       currentNormalMinutes: normalAfpMinutesFor(respondent.id),
       afpCapMinutes: hoursToMinutes(respondent.afpHoursCap),
       availabilityCount: availabilityByShiftId.get(shift.id)?.size ?? 0,
@@ -330,7 +375,7 @@ export function runPureAllocation(input: PureAllocationInput): PureAllocationOut
 
     if (!validation.ok) {
       const capOnly =
-        respondent.category === "AFP" &&
+        respondent.hasAfpCap &&
         allowAfpCapOverflowAvailable &&
         validation.reasonCodes.length === 1 &&
         validation.reasonCodes[0] === "BLOCKED_BY_AFP_CAP";
@@ -367,10 +412,7 @@ export function runPureAllocation(input: PureAllocationInput): PureAllocationOut
       respondentId: best.respondent.id,
       shiftId: shift.id,
       source: best.source,
-      explanationCodes:
-        best.source === "engine_afp_cap_overflow_available"
-          ? ["BLOCKED_BY_AFP_CAP"]
-          : [],
+      explanationCodes: best.source === "engine_afp_cap_overflow_available" ? ["BLOCKED_BY_AFP_CAP"] : [],
     });
     return true;
   };
@@ -380,8 +422,12 @@ export function runPureAllocation(input: PureAllocationInput): PureAllocationOut
     .sort((a, b) => {
       const aAvailable = availabilityByShiftId.get(a.id)?.size ?? 0;
       const bAvailable = availabilityByShiftId.get(b.id)?.size ?? 0;
-      const aGeneral = respondents.filter((respondent) => respondent.category === "General" && respondent.availableShiftIds.has(a.id)).length;
-      const bGeneral = respondents.filter((respondent) => respondent.category === "General" && respondent.availableShiftIds.has(b.id)).length;
+      const aGeneral = respondents.filter(
+        (respondent) => !respondent.hasAfpCap && respondent.availableShiftIds.has(a.id),
+      ).length;
+      const bGeneral = respondents.filter(
+        (respondent) => !respondent.hasAfpCap && respondent.availableShiftIds.has(b.id),
+      ).length;
       return (
         aAvailable - bAvailable ||
         aGeneral - bGeneral ||
@@ -396,7 +442,11 @@ export function runPureAllocation(input: PureAllocationInput): PureAllocationOut
     if (assignmentByShiftId.has(shift.id)) continue;
     if (assignBest(shift, respondents, false)) continue;
     if (input.allowAfpOverCapForAvailableShifts) {
-      assignBest(shift, respondents.filter((respondent) => respondent.category === "AFP"), true);
+      assignBest(
+        shift,
+        respondents.filter((respondent) => respondent.hasAfpCap),
+        true,
+      );
     }
   }
 
@@ -404,7 +454,11 @@ export function runPureAllocation(input: PureAllocationInput): PureAllocationOut
     if (assignBest(shift, respondents, false)) return true;
     if (
       input.allowAfpOverCapForAvailableShifts &&
-      assignBest(shift, respondents.filter((respondent) => respondent.category === "AFP"), true)
+      assignBest(
+        shift,
+        respondents.filter((respondent) => respondent.hasAfpCap),
+        true,
+      )
     ) {
       return true;
     }
@@ -428,9 +482,7 @@ export function runPureAllocation(input: PureAllocationInput): PureAllocationOut
 
       const candidateForBlank =
         candidateFor(shift, respondent, false) ??
-        (input.allowAfpOverCapForAvailableShifts
-          ? candidateFor(shift, respondent, true)
-          : null);
+        (input.allowAfpOverCapForAvailableShifts ? candidateFor(shift, respondent, true) : null);
 
       if (candidateForBlank) {
         addAssignment({
@@ -438,20 +490,19 @@ export function runPureAllocation(input: PureAllocationInput): PureAllocationOut
           shiftId: shift.id,
           source: candidateForBlank.source,
           explanationCodes:
-            candidateForBlank.source === "engine_afp_cap_overflow_available"
-              ? ["BLOCKED_BY_AFP_CAP"]
-              : [],
+            candidateForBlank.source === "engine_afp_cap_overflow_available" ? ["BLOCKED_BY_AFP_CAP"] : [],
         });
 
-        const moved = assignBest(
-          conflictingShift,
-          respondents.filter((candidate) => candidate.id !== respondent.id),
-          false,
-        ) ||
+        const moved =
+          assignBest(
+            conflictingShift,
+            respondents.filter((candidate) => candidate.id !== respondent.id),
+            false,
+          ) ||
           (input.allowAfpOverCapForAvailableShifts &&
             assignBest(
               conflictingShift,
-              respondents.filter((candidate) => candidate.id !== respondent.id && candidate.category === "AFP"),
+              respondents.filter((candidate) => candidate.id !== respondent.id && candidate.hasAfpCap),
               true,
             ));
 
@@ -469,8 +520,34 @@ export function runPureAllocation(input: PureAllocationInput): PureAllocationOut
     if (!assignmentByShiftId.has(shift.id)) repairBlankWithAvailability(shift);
   }
 
+  const provisionalStaffedMinutes = Array.from(assignmentByShiftId.values()).reduce(
+    (sum, assignment) => sum + hoursToMinutes(shiftMap.get(assignment.shiftId)?.durationHours ?? 0),
+    0,
+  );
+  const provisionalCappedAfpMinutes = respondents
+    .filter((respondent) => respondent.hasAfpCap)
+    .reduce((sum, respondent) => sum + calcMinutes(allocatedShiftIdsFor(respondent.id), shiftMap), 0);
+  targetResult = solveNonAfpPenaltyTargets(
+    generalTargetInputs,
+    Math.max(0, provisionalStaffedMinutes - provisionalCappedAfpMinutes),
+  );
+  for (const target of targetResult.targets) {
+    targetMinutesByRespondentId.set(target.respondentId, target.targetMinutes);
+  }
+
   type FairnessScore = {
+    backToBackPairDays: number;
     maxAbsTargetDeviationMinutes: number;
+    maxStrikeOverageMinutes: number;
+    totalStrikeOverageMinutes: number;
+    availabilityLimitedMaxShortfallRatio: number;
+    availabilityLimitedTotalShortfallRatio: number;
+    availabilityLimitedTotalShortfallMinutes: number;
+    comparableMaxAbsTargetDeviationMinutes: number;
+    comparableMaxShortfallMinutes: number;
+    comparableMaxOverageMinutes: number;
+    comparableTotalAbsDeviationMinutes: number;
+    totalAbsTargetDeviationMinutes: number;
     nonPenalizedStdDevMinutes: number;
     sumSquaredDeviationMinutes: number;
     nonPenalizedRangeMinutes: number;
@@ -491,8 +568,23 @@ export function runPureAllocation(input: PureAllocationInput): PureAllocationOut
     assignedShiftCountBeforeRepair: number,
   ): FairnessScore => {
     const actual = actualMinutesByRespondentId();
-    const general = respondents.filter((respondent) => respondent.category === "General");
-    const nonPenalized = general.filter((respondent) => !respondent.hasPenalty || respondent.penaltyHours <= 0);
+    const general = respondents.filter((respondent) => !respondent.hasAfpCap);
+    const capacityLimitedRespondentIds = new Set(
+      targetResult.targets.filter((target) => target.capacityLimited).map((target) => target.respondentId),
+    );
+    const availabilityLimitedRespondentIds = new Set(
+      targetResult.targets.filter((target) => target.availabilityLimited).map((target) => target.respondentId),
+    );
+    const availabilityLimitedNonPenalized = general.filter(
+      (respondent) =>
+        (!respondent.hasPenalty || respondent.penaltyHours <= 0) &&
+        availabilityLimitedRespondentIds.has(respondent.id) &&
+        (targetMinutesByRespondentId.get(respondent.id) ?? 0) > 0,
+    );
+    const nonPenalized = general.filter(
+      (respondent) =>
+        (!respondent.hasPenalty || respondent.penaltyHours <= 0) && !capacityLimitedRespondentIds.has(respondent.id),
+    );
     const nonPenalizedActual = nonPenalized.map((respondent) => actual.get(respondent.id) ?? 0);
     const nonPenalizedMean =
       nonPenalizedActual.length > 0
@@ -504,6 +596,23 @@ export function runPureAllocation(input: PureAllocationInput): PureAllocationOut
       const target = targetMinutesByRespondentId.get(respondent.id) ?? 0;
       return (actual.get(respondent.id) ?? 0) - target;
     });
+    const comparableTargetDeviations = nonPenalized.map((respondent) => {
+      const target = targetMinutesByRespondentId.get(respondent.id) ?? 0;
+      return (actual.get(respondent.id) ?? 0) - target;
+    });
+    const strikeOverages = general
+      .filter((respondent) => respondent.hasPenalty && respondent.penaltyHours > 0)
+      .map((respondent) =>
+        Math.max(0, (actual.get(respondent.id) ?? 0) - (targetMinutesByRespondentId.get(respondent.id) ?? 0)),
+      );
+    const availabilityLimitedShortfalls = availabilityLimitedNonPenalized.map((respondent) => {
+      const targetMinutes = targetMinutesByRespondentId.get(respondent.id) ?? 0;
+      const shortfallMinutes = Math.max(0, targetMinutes - (actual.get(respondent.id) ?? 0));
+      return {
+        shortfallMinutes,
+        shortfallRatio: shortfallMinutes / targetMinutes,
+      };
+    });
     const maxAbsTargetDeviationMinutes =
       targetDeviations.length > 0 ? Math.max(...targetDeviations.map((value) => Math.abs(value))) : 0;
     const maxDeviationFromMeanMinutes =
@@ -511,23 +620,53 @@ export function runPureAllocation(input: PureAllocationInput): PureAllocationOut
         ? Math.max(...nonPenalizedActual.map((minutes) => Math.abs(minutes - nonPenalizedMean)))
         : 0;
     const nonPenalizedStdDevMinutes = stdDev(nonPenalizedActual);
+    const backToBackPairDays = Array.from(
+      Array.from(assignmentByShiftId.values()).reduce((groups, assignment) => {
+        const shift = shiftMap.get(assignment.shiftId);
+        if (!shift) return groups;
+        const key = `${assignment.respondentId}:${shift.date}`;
+        groups.set(key, [...(groups.get(key) ?? []), shift]);
+        return groups;
+      }, new Map<string, ShiftInfo[]>()),
+    ).filter(([, dayShifts]) => dayShifts.length === 2 && isBackToBack(dayShifts[0], dayShifts[1])).length;
     const targetStdDevHours = 2;
     const warningStdDevHours = 4;
     const highStdDevReasonCodes =
       nonPenalizedStdDevMinutes > hoursToMinutes(targetStdDevHours)
-        ? [
-            "HIGH_STD_DEV_NO_LEGAL_REPAIR",
-            "INSUFFICIENT_OVERLAPPING_AVAILABILITY",
-            "SAME_DAY_CONSTRAINT",
-            "SHIFT_GRANULARITY_LIMIT",
-            ...(Array.from(assignmentByShiftId.values()).some((assignment) => assignment.source === "manual")
-              ? ["MANUAL_LOCK_CONSTRAINT"]
-              : []),
-          ]
+        ? [...(targetResult.capacityShortfallMinutes > 0 ? ["NON_AFP_CAPACITY_SHORTFALL"] : [])]
         : [];
 
     return {
+      backToBackPairDays,
       maxAbsTargetDeviationMinutes,
+      maxStrikeOverageMinutes: strikeOverages.length > 0 ? Math.max(...strikeOverages) : 0,
+      totalStrikeOverageMinutes: strikeOverages.reduce((sum, value) => sum + value, 0),
+      availabilityLimitedMaxShortfallRatio:
+        availabilityLimitedShortfalls.length > 0
+          ? Math.max(...availabilityLimitedShortfalls.map((shortfall) => shortfall.shortfallRatio))
+          : 0,
+      availabilityLimitedTotalShortfallRatio: availabilityLimitedShortfalls.reduce(
+        (sum, shortfall) => sum + shortfall.shortfallRatio,
+        0,
+      ),
+      availabilityLimitedTotalShortfallMinutes: availabilityLimitedShortfalls.reduce(
+        (sum, shortfall) => sum + shortfall.shortfallMinutes,
+        0,
+      ),
+      comparableMaxAbsTargetDeviationMinutes:
+        comparableTargetDeviations.length > 0
+          ? Math.max(...comparableTargetDeviations.map((value) => Math.abs(value)))
+          : 0,
+      comparableMaxShortfallMinutes:
+        comparableTargetDeviations.length > 0
+          ? Math.max(...comparableTargetDeviations.map((value) => Math.max(0, -value)))
+          : 0,
+      comparableMaxOverageMinutes:
+        comparableTargetDeviations.length > 0
+          ? Math.max(...comparableTargetDeviations.map((value) => Math.max(0, value)))
+          : 0,
+      comparableTotalAbsDeviationMinutes: comparableTargetDeviations.reduce((sum, value) => sum + Math.abs(value), 0),
+      totalAbsTargetDeviationMinutes: targetDeviations.reduce((sum, value) => sum + Math.abs(value), 0),
       nonPenalizedStdDevMinutes,
       sumSquaredDeviationMinutes: targetDeviations.reduce((sum, value) => sum + value * value, 0),
       nonPenalizedRangeMinutes: nonPenalizedMax - nonPenalizedMin,
@@ -551,19 +690,32 @@ export function runPureAllocation(input: PureAllocationInput): PureAllocationOut
         assignedShiftCountBeforeRepair,
         assignedShiftCountAfterRepair: assignmentByShiftId.size,
         highStdDevReasonCodes,
+        backToBackPairDays,
       },
     };
   };
 
   const scoreIsBetter = (next: FairnessScore, current: FairnessScore): boolean => {
-    const epsilon = 0.5;
-    const comparisons: Array<[number, number]> = [
-      [next.maxAbsTargetDeviationMinutes, current.maxAbsTargetDeviationMinutes],
-      [next.nonPenalizedStdDevMinutes, current.nonPenalizedStdDevMinutes],
-      [next.sumSquaredDeviationMinutes, current.sumSquaredDeviationMinutes],
-      [next.nonPenalizedRangeMinutes, current.nonPenalizedRangeMinutes],
+    const minuteEpsilon = 0.5;
+    const ratioEpsilon = 1e-9;
+    const comparisons: Array<[number, number, number]> = [
+      [next.maxAbsTargetDeviationMinutes, current.maxAbsTargetDeviationMinutes, minuteEpsilon],
+      [next.maxStrikeOverageMinutes, current.maxStrikeOverageMinutes, minuteEpsilon],
+      [next.totalStrikeOverageMinutes, current.totalStrikeOverageMinutes, minuteEpsilon],
+      [next.availabilityLimitedMaxShortfallRatio, current.availabilityLimitedMaxShortfallRatio, ratioEpsilon],
+      [next.availabilityLimitedTotalShortfallRatio, current.availabilityLimitedTotalShortfallRatio, ratioEpsilon],
+      [next.availabilityLimitedTotalShortfallMinutes, current.availabilityLimitedTotalShortfallMinutes, minuteEpsilon],
+      [next.comparableMaxAbsTargetDeviationMinutes, current.comparableMaxAbsTargetDeviationMinutes, minuteEpsilon],
+      [next.comparableMaxShortfallMinutes, current.comparableMaxShortfallMinutes, minuteEpsilon],
+      [next.comparableMaxOverageMinutes, current.comparableMaxOverageMinutes, minuteEpsilon],
+      [next.nonPenalizedRangeMinutes, current.nonPenalizedRangeMinutes, minuteEpsilon],
+      [next.comparableTotalAbsDeviationMinutes, current.comparableTotalAbsDeviationMinutes, minuteEpsilon],
+      [next.backToBackPairDays, current.backToBackPairDays, 0],
+      [next.totalAbsTargetDeviationMinutes, current.totalAbsTargetDeviationMinutes, minuteEpsilon],
+      [next.nonPenalizedStdDevMinutes, current.nonPenalizedStdDevMinutes, minuteEpsilon],
+      [next.sumSquaredDeviationMinutes, current.sumSquaredDeviationMinutes, minuteEpsilon],
     ];
-    for (const [a, b] of comparisons) {
+    for (const [a, b, epsilon] of comparisons) {
       if (Math.abs(a - b) <= epsilon) continue;
       return a < b;
     }
@@ -582,23 +734,21 @@ export function runPureAllocation(input: PureAllocationInput): PureAllocationOut
     successfulRepairMoves: number,
     assignedShiftCountBeforeRepair: number,
   ): boolean => {
-    const baseScore = currentFairnessScore(
-      repairAttempted,
-      successfulRepairMoves,
-      assignedShiftCountBeforeRepair,
-    );
+    const baseScore = currentFairnessScore(repairAttempted, successfulRepairMoves, assignedShiftCountBeforeRepair);
     const actual = actualMinutesByRespondentId();
     const movableAssignments = Array.from(assignmentByShiftId.values())
       .filter((assignment) => assignment.source !== "manual")
       .sort((a, b) => {
         const donorA = respondentById.get(a.respondentId);
         const donorB = respondentById.get(b.respondentId);
-        const overA = donorA?.category === "General"
-          ? (actual.get(a.respondentId) ?? 0) - (targetMinutesByRespondentId.get(a.respondentId) ?? 0)
-          : 0;
-        const overB = donorB?.category === "General"
-          ? (actual.get(b.respondentId) ?? 0) - (targetMinutesByRespondentId.get(b.respondentId) ?? 0)
-          : 0;
+        const overA =
+          donorA && !donorA.hasAfpCap
+            ? (actual.get(a.respondentId) ?? 0) - (targetMinutesByRespondentId.get(a.respondentId) ?? 0)
+            : 0;
+        const overB =
+          donorB && !donorB.hasAfpCap
+            ? (actual.get(b.respondentId) ?? 0) - (targetMinutesByRespondentId.get(b.respondentId) ?? 0)
+            : 0;
         const shiftA = shiftMap.get(a.shiftId)!;
         const shiftB = shiftMap.get(b.shiftId)!;
         return (
@@ -612,13 +762,16 @@ export function runPureAllocation(input: PureAllocationInput): PureAllocationOut
 
     for (const originalAssignment of movableAssignments) {
       const shift = shiftMap.get(originalAssignment.shiftId);
-      if (!shift) continue;
+      const originalRespondent = respondentById.get(originalAssignment.respondentId);
+      if (!shift || !originalRespondent) continue;
 
       removeAssignment(shift.id);
       const recipients = respondents
         .filter(
           (respondent) =>
-            respondent.id !== originalAssignment.respondentId && respondent.availableShiftIds.has(shift.id),
+            respondent.id !== originalAssignment.respondentId &&
+            respondent.hasAfpCap === originalRespondent.hasAfpCap &&
+            respondent.availableShiftIds.has(shift.id),
         )
         .sort((a, b) => {
           const deficitA = (targetMinutesByRespondentId.get(a.id) ?? 0) - (actual.get(a.id) ?? 0);
@@ -637,11 +790,7 @@ export function runPureAllocation(input: PureAllocationInput): PureAllocationOut
           source: candidate.source,
           explanationCodes: assignmentCodesFor(candidate.source),
         });
-        const nextScore = currentFairnessScore(
-          repairAttempted,
-          successfulRepairMoves,
-          assignedShiftCountBeforeRepair,
-        );
+        const nextScore = currentFairnessScore(repairAttempted, successfulRepairMoves, assignedShiftCountBeforeRepair);
         if (scoreIsBetter(nextScore, baseScore)) return true;
         removeAssignment(shift.id);
       }
@@ -657,11 +806,7 @@ export function runPureAllocation(input: PureAllocationInput): PureAllocationOut
     successfulRepairMoves: number,
     assignedShiftCountBeforeRepair: number,
   ): boolean => {
-    const baseScore = currentFairnessScore(
-      repairAttempted,
-      successfulRepairMoves,
-      assignedShiftCountBeforeRepair,
-    );
+    const baseScore = currentFairnessScore(repairAttempted, successfulRepairMoves, assignedShiftCountBeforeRepair);
     const movableAssignments = Array.from(assignmentByShiftId.values())
       .filter((assignment) => assignment.source !== "manual")
       .sort((a, b) => {
@@ -680,6 +825,7 @@ export function runPureAllocation(input: PureAllocationInput): PureAllocationOut
         const firstShift = shiftMap.get(first.shiftId);
         const secondShift = shiftMap.get(second.shiftId);
         if (!firstRespondent || !secondRespondent || !firstShift || !secondShift) continue;
+        if (firstRespondent.hasAfpCap !== secondRespondent.hasAfpCap) continue;
         if (!firstRespondent.availableShiftIds.has(secondShift.id)) continue;
         if (!secondRespondent.availableShiftIds.has(firstShift.id)) continue;
 
@@ -699,10 +845,8 @@ export function runPureAllocation(input: PureAllocationInput): PureAllocationOut
         }
 
         const firstTakesSecond = secondTakesFirst
-          ? candidateFor(secondShift, firstRespondent, false) ??
-            (input.allowAfpOverCapForAvailableShifts
-              ? candidateFor(secondShift, firstRespondent, true)
-              : null)
+          ? (candidateFor(secondShift, firstRespondent, false) ??
+            (input.allowAfpOverCapForAvailableShifts ? candidateFor(secondShift, firstRespondent, true) : null))
           : null;
         if (firstTakesSecond) {
           addAssignment({
@@ -731,8 +875,9 @@ export function runPureAllocation(input: PureAllocationInput): PureAllocationOut
 
   const assignedShiftCountBeforeFairnessRepair = assignmentByShiftId.size;
   let fairnessRepairMoves = 0;
-  let fairnessRepairAttempted = currentFairnessScore(false, 0, assignedShiftCountBeforeFairnessRepair)
-    .nonPenalizedStdDevMinutes > hoursToMinutes(2);
+  let fairnessRepairAttempted =
+    currentFairnessScore(false, 0, assignedShiftCountBeforeFairnessRepair).nonPenalizedStdDevMinutes >
+    hoursToMinutes(2);
 
   for (let iteration = 0; iteration < 200; iteration++) {
     const moved =
@@ -788,7 +933,9 @@ export function runPureAllocation(input: PureAllocationInput): PureAllocationOut
           };
         })
         .filter(
-          (candidate): candidate is {
+          (
+            candidate,
+          ): candidate is {
             respondent: RespondentInfo;
             validation: ReturnType<typeof canAssignShiftToRespondent>;
             dayTier: 0 | 1 | 2;
@@ -813,15 +960,37 @@ export function runPureAllocation(input: PureAllocationInput): PureAllocationOut
         source: NO_AVAILABILITY_AFP_PLACEHOLDER_SOURCE,
         explanationCodes: [
           "NO_AVAILABILITY",
-          ...best.validation.reasonCodes.filter(
-            (code) => code === "EXTREME_NO_AVAILABILITY_PLACEHOLDER_STACKING",
-          ),
+          ...best.validation.reasonCodes.filter((code) => code === "EXTREME_NO_AVAILABILITY_PLACEHOLDER_STACKING"),
         ],
       });
     }
   };
 
   assignNoAvailabilityAfpPlaceholders();
+
+  const finalStaffedMinutes = Array.from(assignmentByShiftId.values()).reduce(
+    (sum, assignment) => sum + hoursToMinutes(shiftMap.get(assignment.shiftId)?.durationHours ?? 0),
+    0,
+  );
+  const finalCappedAfpMinutes = respondents
+    .filter((respondent) => respondent.hasAfpCap)
+    .reduce((sum, respondent) => sum + calcMinutes(allocatedShiftIdsFor(respondent.id), shiftMap), 0);
+  targetResult = solveNonAfpPenaltyTargets(
+    generalTargetInputs,
+    Math.max(0, finalStaffedMinutes - finalCappedAfpMinutes),
+  );
+  for (const target of targetResult.targets) {
+    targetMinutesByRespondentId.set(target.respondentId, target.targetMinutes);
+  }
+
+  for (let iteration = 0; iteration < 200; iteration++) {
+    const moved =
+      trySingleFairnessMove(fairnessRepairAttempted, fairnessRepairMoves, assignedShiftCountBeforeFairnessRepair) ||
+      tryPairwiseFairnessSwap(fairnessRepairAttempted, fairnessRepairMoves, assignedShiftCountBeforeFairnessRepair);
+    if (!moved) break;
+    fairnessRepairAttempted = true;
+    fairnessRepairMoves += 1;
+  }
 
   const fairnessDiagnostics = currentFairnessScore(
     fairnessRepairAttempted,
@@ -833,11 +1002,7 @@ export function runPureAllocation(input: PureAllocationInput): PureAllocationOut
     const assignments = (assignmentsByRespondentId.get(respondent.id) ?? []).sort((a, b) => {
       const shiftA = shiftMap.get(a.shiftId)!;
       const shiftB = shiftMap.get(b.shiftId)!;
-      return (
-        shiftA.date.localeCompare(shiftB.date) ||
-        shiftA.slotIndex - shiftB.slotIndex ||
-        shiftA.id - shiftB.id
-      );
+      return shiftA.date.localeCompare(shiftB.date) || shiftA.slotIndex - shiftB.slotIndex || shiftA.id - shiftB.id;
     });
     const shiftIds = assignments.map((assignment) => assignment.shiftId);
     return {
@@ -864,6 +1029,17 @@ export function runPureAllocation(input: PureAllocationInput): PureAllocationOut
     unallocatedShiftIds: shifts.map((shift) => shift.id).filter((shiftId) => !assignmentByShiftId.has(shiftId)),
     fairnessDiagnostics,
   };
+}
+
+export async function runPureAllocation(input: PureAllocationInput): Promise<PureAllocationOutput> {
+  const globalAttempt = await runGlobalAllocation(input);
+  if (globalAttempt.ok) return globalAttempt.output;
+
+  const fallback = runGreedyAllocation(input);
+  fallback.fairnessDiagnostics.optimizationMethod = "greedy_fallback";
+  fallback.fairnessDiagnostics.optimizerStatus = globalAttempt.reason;
+  fallback.fairnessDiagnostics.optimalCoverageProven = false;
+  return fallback;
 }
 
 export async function runAllocation(options: AllocationOptions): Promise<PureAllocationOutput> {
@@ -897,6 +1073,7 @@ export async function runAllocation(options: AllocationOptions): Promise<PureAll
       respondentCategory: respondentsTable.category,
       hasPenalty: responsesTable.hasPenalty,
       penaltyHours: responsesTable.penaltyHours,
+      hasAfpCap: responsesTable.hasAfpCap,
       afpHoursCap: responsesTable.afpHoursCap,
     })
     .from(responsesTable)
@@ -906,9 +1083,10 @@ export async function runAllocation(options: AllocationOptions): Promise<PureAll
   const respondentMap = new Map<number, AllocationRespondentInput>();
   for (const response of responses) {
     if (includedIdSet && !includedIdSet.has(response.respondentId)) continue;
-    const category = afpIdSet.has(response.respondentId) || response.respondentCategory === "AFP" ? "AFP" : "General";
+    const category = response.respondentCategory === "AFP" ? "AFP" : "General";
     const hasPenalty = Boolean(response.hasPenalty);
     const penaltyHours = hasPenalty ? Math.max(0, response.penaltyHours ?? 0) : 0;
+    const hasAfpCap = afpIdSet.has(response.respondentId) || Boolean(response.hasAfpCap);
     const afpHoursCap = Math.max(0, response.afpHoursCap ?? 10);
     if (!respondentMap.has(response.respondentId)) {
       respondentMap.set(response.respondentId, {
@@ -918,6 +1096,7 @@ export async function runAllocation(options: AllocationOptions): Promise<PureAll
         availableShiftIds: new Set(),
         hasPenalty,
         penaltyHours,
+        hasAfpCap,
         afpHoursCap,
         allowNoAvailabilityFallback: afpUnclaimedShiftIdSet.has(response.respondentId),
       });
@@ -927,6 +1106,7 @@ export async function runAllocation(options: AllocationOptions): Promise<PureAll
     respondent.category = category;
     respondent.hasPenalty = respondent.hasPenalty || hasPenalty;
     respondent.penaltyHours = Math.max(respondent.penaltyHours, penaltyHours);
+    respondent.hasAfpCap = hasAfpCap;
     respondent.afpHoursCap = afpHoursCap;
     respondent.allowNoAvailabilityFallback = afpUnclaimedShiftIdSet.has(response.respondentId);
     respondent.availableShiftIds.add(response.shiftId);

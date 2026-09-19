@@ -22,6 +22,9 @@ export interface AllocationRespondentStat {
   penaltyHours: number;
   penaltyGapHours: number;
   targetHours: number;
+  neutralTargetHours: number;
+  effectivePenaltyHours: number;
+  unappliedPenaltyHours: number;
   availableCapacityHours: number;
   deviationFromTargetHours: number;
   sameDayDoubleCount: number;

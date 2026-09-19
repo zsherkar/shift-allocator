@@ -1,6 +1,10 @@
 import ExcelJS from "exceljs";
 import type { Borders, Fill, Style } from "exceljs";
 import { format, parseISO } from "date-fns";
+import {
+  formatAllocationDisplayName,
+  isNoAvailabilityPlaceholderSource,
+} from "./allocationDisplay";
 
 export type CalendarSurvey = {
   title?: string | null;
@@ -96,10 +100,6 @@ export type BuildCalendarWorkbookInput = {
   allocStats?: CalendarStats | null;
 };
 
-export function isNoAvailabilityPlaceholderSource(source: string | null | undefined): boolean {
-  return source === "admin_no_availability_afp_placeholder" || source === "engine_no_availability_afp_fallback";
-}
-
 function formatTime12(time: string) {
   const [h, m] = time.split(":").map(Number);
   const suffix = h >= 12 ? "PM" : "AM";
@@ -133,10 +133,9 @@ export async function buildCalendarWorkbook({
   for (const allocation of allocations) {
     const respondent = respondentById.get(allocation.respondentId);
     for (const shift of allocation.allocatedShifts) {
-      const placeholder = isNoAvailabilityPlaceholderSource(shift.assignmentSource);
       allocationByShiftId.set(shift.shiftId, {
         name: allocation.name,
-        displayName: placeholder ? `${allocation.name}*` : allocation.name,
+        displayName: formatAllocationDisplayName(allocation.name, shift.assignmentSource),
         email: respondent?.email ?? "",
         category: allocation.category,
         source: shift.assignmentSource,
