@@ -1,253 +1,179 @@
-<h1 align="center">ISH Front Desk Allocator</h1>
+<h1 align="center">Shift Allocator</h1>
 
+<p align="center"><strong>From everyone's availability to a schedule you can explain.</strong></p>
+<p align="center">Collect availability, balance monthly shifts, review the exceptions, and export a readable calendar.</p>
 <p align="center">
-  <strong>Open-source shift allocation software for organizations that would prefer not to manage staffing through panic, spreadsheets, and increasingly aggressive group chats.</strong>
+  <a href="LICENSE"><img alt="MIT license" src="https://img.shields.io/badge/license-MIT-355c50?style=flat-square" /></a>
+  <img alt="TypeScript" src="https://img.shields.io/badge/TypeScript-5.9-3178c6?style=flat-square" />
+  <img alt="Self hosted" src="https://img.shields.io/badge/self--hosted-PostgreSQL-355c50?style=flat-square" />
 </p>
 
-<p align="center">
-  Built for <strong>International Student House, Washington DC</strong>. Released for everyone else because shift chaos, sadly, is not unique.
-</p>
+<p align="center"><img src="docs/images/workflow.gif" alt="Animated tour: create a survey, collect availability, review responses, inspect allocations, and export the calendar" width="1000" /></p>
 
-<p align="center">
-  <img alt="Built for shift chaos" src="https://img.shields.io/badge/Built%20for-Shift%20Chaos-9a3412?style=for-the-badge" />
-  <img alt="Open source" src="https://img.shields.io/badge/Open%20Source-Yes,%20Against%20Medical%20Advice-0f766e?style=for-the-badge" />
-  <img alt="License MIT" src="https://img.shields.io/badge/License-MIT-1d4ed8?style=for-the-badge" />
-</p>
+**Shift Allocator** is an open-source scheduling application originally built for the front desk at **International Student House, Washington, DC**. The repository was previously named `ISH-Front-Desk-Allocator`. It is useful anywhere a monthly duty roster has outgrown one spreadsheet and a heroic coordinator.
 
-## What This Is
+The app retains its I-House theme and terminology. AFP means *Ambassador Fellow*; AFP participants can have an optional monthly hour cap. General participants and uncapped AFPs join the ordinary allocation pool. Other organizations can adapt the shift templates, category labels, and rules to their needs.
 
-`ISH Front Desk Allocator` is a scheduling framework for any place where people:
+[Features](#what-you-can-do) · [Screenshots](#a-look-inside) · [Try-the-interface](#try-the-interface-with-demo-data) · [Setup](#run-your-own-instance) · [Development](#development) · [Security](SECURITY.md)
 
-1. submit availability,
-2. expect fair shift assignments,
-3. absolutely do not want to be assigned something they never volunteered for, and
-4. become spiritually unwell when the final schedule is unreadable.
+> All screenshots and the animation show the actual app running locally with fictional names and `example.com` addresses. The schedule is an illustrative fixture, not a production roster or an optimizer benchmark. The guided animation combines captured app views; no resident data is included.
 
-It began life as a practical system for the Front Desk at International Student House, Washington DC. It is now general enough to be forked and adapted for almost any recurring shift-based workflow where fairness, visibility, and administrative sanity matter.
+## What You Can Do
 
-In plainer English: if your current process involves one spreadsheet, three side lists, four contradictory WhatsApp replies, and one heroic coordinator pretending everything is fine, this project is for you.
+| Stage | Tools |
+| --- | --- |
+| Collect | Generate a month's shifts, set a response deadline, share a token-based survey link, and close or reopen collection. |
+| Review | Inspect and edit submitted availability; include or exclude people from a run; configure optional AFP caps and penalty hours. |
+| Allocate | Preview an allocation with a dry run, then save it. The optimizer considers coverage, availability, hour balance, caps, and same-day constraints. |
+| Explain | Compare hours against targets, inspect who was available for a shift, and review reasons for blanks or exceptional assignments. |
+| Adjust | Make manual changes, preserve manual assignments on reruns, and restore saved allocation recovery points. Deleted responses have a separate recovery workflow. |
+| Share | Display a monthly calendar and export PNG, PDF, editable Excel, allocation CSV, or audit CSV. Review respondent allocation history across months. |
 
-## Why It Exists
+### How Allocation Works
 
-Because "we can just do it manually" has destroyed more evenings than bad Wi-Fi.
+Coverage comes first. Within the constraints, the allocator balances eligible hours and limits avoidable back-to-back duties. The global optimizer uses **HiGHS**; diagnostics distinguish an exact result, a bounded result, and a fallback. Availability and competing constraints can prevent perfectly equal hours or full coverage.
 
-Most shift systems fail in one of five extremely dignified ways:
+Normal assignments require submitted availability. Adjacent same-day shifts can be used as a back-to-back emergency; non-adjacent doubles and three shifts in one day are prohibited. Optional AFP overflow and no-availability placeholders are explicit modes, with separate audit labels and statistics. Placeholder assignments are marked with an asterisk in exports.
 
-- nobody knows who is actually available,
-- the final allocation is visibly unfair,
-- AFP or capped categories get mixed in with everyone else and wreck the stats,
-- admins cannot make manual adjustments without breaking the whole schedule,
-- the exported calendar looks like it was printed during a power outage.
+Penalty hours are deducted from neutral targets, with capacity limits and unmet deductions surfaced for review. Manual assignments are included in the workload calculation. A dry run helps you inspect the proposed result before saving it; recovery points help you undo later changes.
 
-This project exists to make those problems somebody else's childhood memory.
+## A Look Inside
 
-## What It Does
+### 1. Collect Availability
 
-- Generates month-based availability surveys with weekday and weekend slots.
-- Collects responses and stores respondent information consistently across surveys.
-- Lets admins review, edit, add, and remove selected shifts before allocation.
-- Supports inclusion/exclusion of respondents for a given run.
-- Supports AFP caps, penalties, and manual overrides.
-- Runs allocations with fairness constraints instead of pure vibes.
-- Surfaces availability analytics and respondent history.
-- Exports the final schedule as printable image and PDF outputs.
-- Keeps admin actions behind login while allowing public survey links for respondents.
+A public survey groups weekday and weekend shifts, totals selected hours, and gathers respondent details. People choose the shifts they can actually work. Remembering details on the device is optional.
 
-## A Very Normal Workflow
+![Public availability survey showing selected shifts](docs/images/availability.png)
 
-1. Create a survey for a month.
-2. Send the link to respondents.
-3. Watch people remember that deadlines are real only in the final 47 minutes.
-4. Close the survey.
-5. Review responses, clean up edge cases, set AFP caps, add penalties if needed.
-6. Run allocation.
-7. Adjust any final assignments manually.
-8. Export a schedule that does not look embarrassed to exist.
+### 2. Review Responses
 
-## Places This Framework Can Be Used
+See submitted hours and categories together. The **Use** checkbox controls participation in the next allocation; the response editor handles availability, caps, and penalties.
 
-This was built for a front desk. It is absolutely not limited to a front desk.
+![Response review table with fictional participants and inclusion controls](docs/images/responses.png)
 
-### Obvious Uses
+### 3. Inspect the Result
 
-- residence hall front desks
-- apartment concierge or reception teams
-- hostel or student housing duty desks
-- embassy or fellowship duty staffing
-- lab monitors and equipment desk staff
-- student center or library circulation desks
-- admissions event staffing
-- volunteer welcome desks
-- museum or gallery floor staffing
-- conference registration crews
+Post-allocation statistics show coverage, workload distribution, and exceptions. The **Allocation Audit** gives a per-shift view of the assignment and available candidates. Both help answer why someone received a shift—or why a shift is blank.
 
-### Slightly More Chaotic Uses
-
-- call center or hotline rotations
-- maker space supervisors
-- study room proctors
-- tutoring desk coverage
-- hackathon help desk staffing
-- community kitchen volunteer shifts
-- co-working space hosts
-- club event crew assignments
-- film festival usher schedules
-- podcast studio monitors
-
-### Uses For Teams Who Are Already In Too Deep
-
-- church or community center ushers
-- legal clinic student volunteers
-- health outreach tabling shifts
-- student newspaper production nights
-- rehearsal room supervision
-- campus orientation staffing
-- academic conference moderators
-- makers market booth rosters
-- after-school program supervision
-- any duty rota currently described as "we have a Google Sheet somewhere"
+![Post-allocation statistics from the illustrative demo schedule](docs/images/allocation-stats.png)
 
 <details>
-<summary><strong>Short rule of thumb</strong></summary>
+<summary>View the per-shift audit</summary>
 
-If humans pick availability, another human needs to allocate time fairly, and someone will complain if the final schedule looks ugly, this framework is probably a fit.
+![Allocation audit showing fictional assignments and available candidates](docs/images/allocation-audit.png)
 
 </details>
 
-## Why Not Just Use A Spreadsheet?
+### 4. Export the Schedule
 
-You can. People do lots of things they technically can do.
+The monthly calendar puts names directly into shift cells. Export an image or PDF for circulation, or an editable Excel workbook for further formatting. Inspect the final schedule before sharing it.
 
-Spreadsheets are fine until you need all of the following at once:
+![Monthly calendar populated with fictional names](docs/images/calendar.png)
 
-- recurring month creation,
-- structured shift choices,
-- consistent respondent identity,
-- historical analytics,
-- fair allocation logic,
-- category-based caps,
-- penalties,
-- manual admin adjustments,
-- externally shareable surveys,
-- clean exports for printing.
+## A Typical Month
 
-At that point the spreadsheet stops being a tool and becomes folklore.
+1. Create a survey for the month and set the deadline.
+2. Share its public link with respondents.
+3. Close collection, review the responses, and choose who participates.
+4. Set any caps or penalties, then run a preview.
+5. Review coverage, workload, and the audit; save the allocation when satisfied.
+6. Make any manual adjustments and export the calendar.
 
-## What Makes This Useful
+The dashboard keeps previous months available. Respondent history, recoverable response deletions, and allocation snapshots support ongoing administration rather than one-off schedule generation.
 
-### For Admins
+## Try the Interface With Demo Data
 
-- You can generate surveys quickly instead of recreating the month by hand.
-- You can inspect who chose what before allocation.
-- You can include or exclude respondents for a run.
-- You can edit selected shifts before generating the final schedule.
-- You can manually adjust allocations afterward without detonating the rest of the month.
-- You can export something printable without apologizing first.
-
-### For Respondents
-
-- They see a clean public survey.
-- They select only the shifts they are actually available for.
-- Their recurring identity details can stay consistent across surveys.
-- They are not supposed to get assigned random shifts they never picked, which is a surprisingly premium feature in some systems.
-
-### For Organizations
-
-- It creates an audit trail.
-- It reduces coordinator dependence on memory.
-- It helps preserve fairness over time.
-- It makes the process repeatable enough that leadership transitions do not resemble a controlled demolition.
-
-## Architecture, In Human Language
-
-This repo is a workspace-based TypeScript project with:
-
-- a public/admin frontend in React + Vite,
-- an API server in Express,
-- shared API contracts and Zod types,
-- a database layer for surveys, respondents, responses, shifts, and allocations,
-- export logic for printable schedule files.
-
-You do not need to love monorepos to use it. You only need to tolerate them briefly.
-
-## Quick Start
+Requires **Node.js 24** and **pnpm 10.33.0** (pinned in `package.json`). No database or account is needed for this documentation preview.
 
 ```bash
-pnpm install
-pnpm build
-pnpm run smoke:deploy-local
+git clone https://github.com/zsherkar/shift-allocator.git
+cd shift-allocator
+corepack enable
+pnpm install --frozen-lockfile
+pnpm --filter @workspace/shift-scheduler build
+node scripts/docs-demo.mjs
 ```
 
-For local development, the project is organized as a workspace with a frontend app and API server under `artifacts/`.
+Open **http://127.0.0.1:4387/admin/surveys** or the [local demo survey](http://127.0.0.1:4387/respond/demo-october).
 
-## Local URLs
+This is a **read-only fixture server** for exploring the interface and reproducing the documentation images. It binds only to loopback, uses no production credentials or database, and rejects writes. It does not run the allocation engine. Use a real instance to create surveys, submit responses, or run allocations. See [media provenance and regeneration](docs/media.md).
 
-- Admin login: `http://localhost:3000/admin/login`
-- Public survey form: `http://localhost:3000/respond/<token>`
+## Run Your Own Instance
 
-## Deployment Options
+### Docker Compose
 
-See these docs for the grown-up version:
+Install Docker with Compose. Clone the repository, then:
 
-- [DEPLOYMENT.md](DEPLOYMENT.md)
-- [ZERO_COST_SELF_HOSTING.md](ZERO_COST_SELF_HOSTING.md)
+```bash
+cp .env.production.example .env.production
+node scripts/hash-admin-password.mjs
+```
 
-If you want:
+The password helper prompts without echoing your password and prints a hash and `ADMIN_USERS_JSON` example. Fill the placeholders in `.env.production` before starting the stack:
 
-- a quick managed deployment: use a hosted app platform,
-- a no-cost long-term setup: self-host with Docker, Caddy, and Duck DNS,
-- a temporary demo link: run locally and tunnel it,
-- a permanent branded URL: buy a domain like a responsible adult.
+| Variable | Purpose |
+| --- | --- |
+| `POSTGRES_PASSWORD` | Database password; use the same value in `DATABASE_URL`. |
+| `DATABASE_URL` | PostgreSQL connection string; Compose uses the `postgres` hostname. |
+| `SESSION_SECRET` | A long random secret for signing admin sessions. |
+| `ADMIN_USERS_JSON` | Admin names/emails and password hashes from the helper. |
+| `PUBLIC_APP_URL` | The externally reachable HTTPS origin used for copied survey links. |
+| `TRUST_PROXY` | Set to `true` behind your trusted reverse proxy. |
 
-## Good Fits
+```bash
+docker compose --env-file .env.production up --build -d
+```
 
-This project is especially good for teams that care about:
+The startup script applies the database schema and starts the API. Put HTTPS in front of a public deployment; secure session cookies are enabled in production. For a local HTTP-only evaluation, `COOKIE_SECURE=false` can be set in the local environment file—remove that override for an HTTPS deployment.
 
-- fairness,
-- repeatability,
-- readable printable schedules,
-- historical respondent tracking,
-- not rebuilding the same scheduling process every month from scratch.
+Admin login is at `/admin/login`; public surveys use `/respond/<token>`. Keep the PostgreSQL volume backed up and retain `.env.production` securely outside version control.
 
-## Bad Fits
+See [deployment details](DEPLOYMENT.md), [self-hosting with Docker and Caddy](ZERO_COST_SELF_HOSTING.md), and [security boundaries](SECURITY.md). The app does not require a paid API or hosted AI service. Hosting resources remain your responsibility.
 
-This project is probably overkill if:
+### Existing Render Deployment
 
-- you schedule three people twice a year,
-- your team genuinely enjoys manually editing spreadsheets,
-- nobody cares who got what hours,
-- the phrase "we will simply decide it in the room" has never once gone wrong for you.
+`render-monthly-hosting` is the deployment branch for the existing I-House instance. `master` is the default development branch. Keep changes merged forward between them; avoid independent fixes drifting across both branches. The repository rename does not rename the existing Render service, database, or public URL. `render.yaml` has automatic deployment disabled; pushing code alone does not deploy it.
 
-## Forking And Customization
+## Development
 
-Fork it. Rename it. Theme it. Swap the terminology. Change the shift logic. Replace "front desk" with "volunteer host," "desk assistant," "gallery monitor," "resident aide," or whatever your operation calls the people bravely holding it together.
+Use Node.js 24, the pinned pnpm version, and PostgreSQL for a functional local instance. Shell environment variables must be supplied to the API; the local Node commands do not automatically load `.env.production`.
 
-This repo was built for one real operational context, but the framework is intentionally open enough to be repurposed for many others.
+```bash
+pnpm install --frozen-lockfile
+pnpm --filter @workspace/db run push
+pnpm --filter @workspace/api-server dev
+```
 
-## Copyright, License, And The Gentle Legal Bit
+Run the API with `PORT=4000`, a local `DATABASE_URL`, `SESSION_SECRET`, and `ADMIN_USERS_JSON`. In a second terminal run `pnpm --filter @workspace/shift-scheduler dev`; Vite serves port 3000 and proxies `/api` to port 4000 by default. Use development-only credentials. The database push command also needs `DATABASE_URL`.
 
-Copyright (c) 2026 Ziauddin Sherkar.
+| Command | Checks or output |
+| --- | --- |
+| `pnpm test` | Allocation rules, recovery/membership logic, export behavior, and dependency security regressions. |
+| `pnpm run typecheck` | Shared libraries, API, and frontend types. |
+| `pnpm run build` | Typecheck plus production frontend and API builds. |
+| `pnpm audit` | Known advisories in the resolved dependency graph. |
+| `pnpm --filter @workspace/api-spec run codegen` | Regenerate client and Zod contracts after changing the OpenAPI spec; inspect generated changes. |
+| `pnpm run smoke:deploy-local` | Build and check local production startup/pages with your configured environment. |
 
-Licensed under the [MIT License](LICENSE).
+### Repository Map
 
-That means you can use, modify, distribute, and adapt this software freely, including for your own organization or fork.
+```text
+artifacts/shift-scheduler/   React frontend, survey form, admin UI, exports
+artifacts/api-server/       Express routes, allocation engine, optimizer, auth
+lib/api-spec/              OpenAPI source and Orval configuration
+lib/api-client-react/      Generated client and React Query integration
+lib/api-zod/               Generated validation contracts
+lib/db/                    Drizzle schema and PostgreSQL access
+scripts/                   Deployment helpers, security tests, docs preview
+docs/                      Screenshots, media provenance, maintenance reports
+```
 
-## Liability Waiver
-
-This software is provided **"as is"**, without warranties or guarantees of any kind. By using this repository, you agree that the author and contributors are not liable for claims, damages, data loss, scheduling errors, missed shifts, broken expectations, admin panic, deadline amnesia, or other consequences resulting from use or misuse of this software.
-
-To put it less legally and more honestly: use it freely, customize it shamelessly, and please sanity-check the schedule before sending it to 40 people.
+React, Vite, Tailwind, Express, PostgreSQL, Drizzle, Zod, Orval, and HiGHS form the core stack. ExcelJS, jsPDF, and html2canvas support exports. Shift times are defined in `artifacts/api-server/src/lib/shiftGenerator.ts`; fairness and feasibility rules live alongside the allocation engine and optimizer tests.
 
 ## Contributing
 
-Improvements are welcome.
+Bug fixes, clearer allocation explanations, accessibility improvements, and export polish are welcome. Open a focused pull request against `master`, explain the behavior change, and run the relevant checks. Add a regression case when changing allocation rules. Use fictional data in issues and screenshots; never commit secrets or resident information.
 
-Especially welcome:
+## License
 
-- bug fixes,
-- scheduling logic improvements,
-- better exports,
-- deployment polish,
-- documentation that saves future admins from despair.
-
-If this project saves your team from one cursed rota spreadsheet, it has already done meaningful public service.
+Copyright (c) 2026 Ziauddin Sherkar. Released under the [MIT License](LICENSE), provided **as is**, without warranty. Please sanity-check the schedule before sending it to everyone.

@@ -60,3 +60,7 @@ tools/
 
 # local prompt/image scratch files
 attached_assets/
+
+# isolated local checkouts and package cache
+.codex-worktrees/
+.pnpm-store/

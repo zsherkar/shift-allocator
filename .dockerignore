@@ -1,0 +1,10 @@
+.git
+.codex-worktrees
+.pnpm-store
+**/node_modules
+**/dist
+**/*.tsbuildinfo
+.env
+.env.*
+docs
+**/*.log

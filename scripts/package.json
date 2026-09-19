@@ -4,12 +4,6 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "node --test security-dependencies.test.mjs",
-    "hello": "tsx ./src/hello.ts",
-    "typecheck": "tsc -p tsconfig.json --noEmit"
-  },
-  "devDependencies": {
-    "@types/node": "catalog:",
-    "tsx": "catalog:"
+    "test": "node --test security-dependencies.test.mjs"
   }
 }
