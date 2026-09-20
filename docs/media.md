@@ -2,7 +2,7 @@
 
 The images in `images/` were captured on 19 September 2026 from the actual React app built from this repository. They use the read-only fixtures in `scripts/docs-demo.mjs`, not the production service or database. All people are fictional and all email addresses use `example.com`.
 
-The fixture's October 2026 schedule is deterministic and illustrative. It does not run the optimizer and must not be used as evidence of optimizer quality, fairness, or production usage. The app retains its I-House branding and rules even though the repository is now called Shift Allocator.
+The fixture's October 2026 schedule is deterministic and illustrative. It does not run the optimizer and must not be used as evidence of optimizer quality, fairness, or production usage. The preview substitutes generic organization labels in the locally served frontend bundle for documentation captures. Production branding and application behavior are unchanged.
 
 ## Capture the App
 
@@ -27,7 +27,9 @@ Capture the rendered UI after it has loaded:
 | `allocation-audit.png` | Survey detail → Allocation Audit |
 | `calendar.png` | Survey detail → Allocation → Show Calendar → Download PNG |
 
-The original browser captures are roughly 1536 × 735 pixels. `calendar.png` is the app's own PNG export, reduced to 1252 × 1962 pixels for the README; it includes the entire month. Other captures preserve the visible interface without replacing labels or results. Different browser dimensions can be used for future captures; the GIF assembler preserves aspect ratio.
+The original browser captures are roughly 1536 × 735 pixels. `calendar.png` is the app's own PNG export, reduced to 1252 × 1962 pixels for the README; it includes the entire month. Other captures show the rendered interface with the generic documentation branding described above. Different browser dimensions can be used for future captures; the GIF assembler preserves aspect ratio.
+
+The README privacy check covered its text, all eight source screenshots, the generated GIF/poster, and image metadata. Displayed participant names match the invented fixture list, email addresses use `example.com`, and the calendar uses the same synthetic assignments. No real respondent records, private contact details, credentials, or identifying image metadata were found. The repository owner's public GitHub handle remains in the clone URL; copyright attribution remains in `LICENSE`.
 
 ## Rebuild the Animation
 

@@ -10,13 +10,13 @@
 
 <p align="center"><img src="docs/images/workflow.gif" alt="Animated tour: create a survey, collect availability, review responses, inspect allocations, and export the calendar" width="1000" /></p>
 
-**Shift Allocator** is an open-source scheduling application originally built for the front desk at **International Student House, Washington, DC**. The repository was previously named `ISH-Front-Desk-Allocator`. It is useful anywhere a monthly duty roster has outgrown one spreadsheet and a heroic coordinator.
+**Shift Allocator** is an open-source scheduling application for monthly duty rosters. Collect availability, balance assignments, review exceptions, and share the finished schedule in one place.
 
-The app retains its I-House theme and terminology. AFP means *Ambassador Fellow*; AFP participants can have an optional monthly hour cap. General participants and uncapped AFPs join the ordinary allocation pool. Other organizations can adapt the shift templates, category labels, and rules to their needs.
+Participants in the AFP category can have an optional monthly hour cap. General participants and uncapped AFPs join the ordinary allocation pool. Organizations can adapt the shift templates, category labels, and rules to their needs.
 
 [Features](#what-you-can-do) · [Screenshots](#a-look-inside) · [Try-the-interface](#try-the-interface-with-demo-data) · [Setup](#run-your-own-instance) · [Development](#development) · [Security](SECURITY.md)
 
-> All screenshots and the animation show the actual app running locally with fictional names and `example.com` addresses. The schedule is an illustrative fixture, not a production roster or an optimizer benchmark. The guided animation combines captured app views; no resident data is included.
+> Screenshots and the animation show the app running locally with generic documentation branding, fictional names, and `example.com` addresses. The schedule is an illustrative fixture, not a production roster or an optimizer benchmark. The guided animation combines captured app views; no real respondent data is included.
 
 ## What You Can Do
 
@@ -132,7 +132,7 @@ See [deployment details](DEPLOYMENT.md), [self-hosting with Docker and Caddy](ZE
 
 ### Existing Render Deployment
 
-`render-monthly-hosting` is the deployment branch for the existing I-House instance. `master` is the default development branch. Keep changes merged forward between them; avoid independent fixes drifting across both branches. The repository rename does not rename the existing Render service, database, or public URL. `render.yaml` has automatic deployment disabled; pushing code alone does not deploy it.
+`render-monthly-hosting` is the deployment branch. `master` is the default development branch. Keep changes merged forward between them; avoid independent fixes drifting across both branches. `render.yaml` has automatic deployment disabled; pushing code alone does not deploy it.
 
 ## Development
 
@@ -176,4 +176,4 @@ Bug fixes, clearer allocation explanations, accessibility improvements, and expo
 
 ## License
 
-Copyright (c) 2026 Ziauddin Sherkar. Released under the [MIT License](LICENSE), provided **as is**, without warranty. Please sanity-check the schedule before sending it to everyone.
+Released under the [MIT License](LICENSE), provided **as is**, without warranty. Please sanity-check the schedule before sending it to everyone.
