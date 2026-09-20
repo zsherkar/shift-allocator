@@ -342,7 +342,15 @@ const server = createServer(async (req, res) => {
       res.end();
       return;
     }
-    const bytes = await readFile(asset);
+    let bytes = await readFile(asset);
+    // Generic branding only in this documentation preview, never in production.
+    if (path.extname(asset) === ".js") {
+      bytes = Buffer.from(bytes.toString("utf8")
+        .replaceAll("International Student House, Washington DC", "Shift Allocator")
+        .replaceAll("I-House Front Desk", "Monthly Scheduling")
+        .replaceAll("I-House", "organization")
+        .replaceAll("ISH Front Desk Allocator", "Shift Allocator"));
+    }
     res.writeHead(200, {
       "Content-Type": types[path.extname(asset)] || "application/octet-stream",
     });
