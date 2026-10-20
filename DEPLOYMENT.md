@@ -153,24 +153,31 @@ TRUST_PROXY=true
 
 Important: Railway is convenient, but it is not a permanent zero-cost production host. Their current pricing docs show the stable always-on route is paid.
 
-## Render steps
+## Render with Neon
 
-1. Push this repo to GitHub.
-2. Create a new Web Service from the repo.
-3. Deploy from the existing `Dockerfile`.
-4. Create a PostgreSQL database in Render.
-5. Add these variables to the service:
+The managed deployment uses a Render Free web service and a separate Neon Free PostgreSQL database, subject to each provider's usage limits. The app's database connection is configured in the Render Dashboard rather than derived from a Render database.
+
+1. Back up the existing database and verify the target Neon database contains the expected surveys, responses, shifts and allocations before changing a live connection.
+2. Use the existing Render web service for this deployment. For a new deployment, create a Free web service from this repo and the existing `Dockerfile`.
+3. Set these variables on the web service:
    - `NODE_ENV=production`
    - `PORT=3000`
-   - `DATABASE_URL`
+   - `DATABASE_URL` (the Neon connection string, including its required SSL parameters)
    - `SESSION_SECRET`
    - `ADMIN_USERS_JSON`
    - `PUBLIC_APP_URL`
-6. Use the generated `onrender.com` URL or attach a custom domain.
+4. Deploy the web service, then verify real survey and allocation reads. `/api/healthz` alone does not check database connectivity.
+5. Use the generated `onrender.com` URL or attach a custom domain.
 
-Important: Render is convenient, but it is not the true no-cost ownership path. Use it if you prefer managed hosting over full control.
+`render.yaml` deliberately sets `DATABASE_URL` to `sync: false`. Existing Blueprint syncs preserve the value configured in the Dashboard. Never replace it with `fromDatabase`: that would redirect the app to Render PostgreSQL on the next sync, making the Neon surveys disappear from the app.
 
-Deployment note: `render.yaml` currently has `autoDeployTrigger: off`, so pushed commits require a manual Render deploy unless auto deploy is re-enabled.
+No Render PostgreSQL database is declared in this Blueprint. Removing the legacy database declaration does not delete the existing database; it stops Blueprint management and prevents later syncs from recreating it. Do not delete an old database as part of a connection change. Provider expiry and retention policies still apply independently.
+
+Before syncing, check the Blueprint's linked branch and preview the changes to the existing service. Do not create a replacement Blueprint. `autoDeployTrigger: off` controls web-service code deploys; Blueprint Auto Sync is a separate setting and can still apply configuration changes after a push.
+
+Keep independent database backups outside either provider and verify their contents before relying on them for recovery.
+
+References: [Render secret values](https://render.com/docs/blueprint-spec#prompting-for-secret-values), [Blueprint resource retention](https://render.com/docs/infrastructure-as-code#deleting-resources), and [Blueprint Auto Sync](https://render.com/docs/infrastructure-as-code#disabling-automatic-sync).
 
 ## Self-hosted path
 
