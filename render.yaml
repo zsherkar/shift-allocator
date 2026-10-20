@@ -14,17 +14,13 @@ services:
       - key: TRUST_PROXY
         value: "true"
       - key: DATABASE_URL
-        fromDatabase:
-          name: ish-front-desk-db
-          property: connectionString
+        # Set the Neon connection string in the Render Dashboard.
+        # Existing values must survive every Blueprint sync.
+        sync: false
       - key: SESSION_SECRET
         generateValue: true
       - key: ADMIN_USERS_JSON
         sync: false
 
-databases:
-  - name: ish-front-desk-db
-    plan: free
-    region: virginia
-    databaseName: fd_allocator
-    user: fd_admin
+# PostgreSQL is hosted on Neon. Do not provision a Render database here.
+# Removing the old declaration leaves the existing Render database intact.
